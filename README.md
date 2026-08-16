@@ -109,18 +109,22 @@ no provider account is touched. Rotating takes effect immediately.
 ## API keys
 
 Every provider is optional. Links whose provider has no key are skipped, so a
-partly filled `.env` just gives you a shorter chain. The three providers the
-default chain is built around:
+partly filled `.env` just gives you a shorter chain. The providers the default
+chain is built around:
 
 | Provider | Env base name | Where to get a key | Notes |
 |---|---|---|---|
 | **OpenRouter** | `FREECHAIN_OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | Free `:free` model variants, generous catalogue |
 | **OpenCode Zen** | `FREECHAIN_OPENCODE_ZEN_API_KEY` | [opencode.ai/zen](https://opencode.ai/zen) | Several zero-cost models |
 | **OmniRoute** | `FREECHAIN_OMNIROUTE_API_KEY` | self-hosted | Loopback router; usually needs **no key** |
+| **Groq** | `FREECHAIN_GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) | Fast free-tier inference, several open models |
+| **Cerebras** | `FREECHAIN_CEREBRAS_API_KEY` | [cloud.cerebras.ai](https://cloud.cerebras.ai/) | Free-tier direct API |
+| **NVIDIA NIM** | `FREECHAIN_NVIDIA_API_KEY` | [build.nvidia.com](https://build.nvidia.com/) | Large catalogue; coverage varies by model |
+| **Google Gemini** | `FREECHAIN_GOOGLE_API_KEY` (or `GEMINI_API_KEY`) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | OpenAI-compatible endpoint, free-tier models |
 
 Also defined in `src/providers.js`, unused until you add chain entries for them:
-`longcat`, `groq`, `cerebras`, `nvidia`, `deepseek`, `google`, `openai`, and
-`local` (Ollama, LM Studio, llama.cpp, vLLM — no key needed).
+`longcat`, `deepseek`, `openai`, and `local` (Ollama, LM Studio, llama.cpp,
+vLLM — no key needed).
 
 Each provider also accepts the plain vendor variable as a fallback, so an
 existing `OPENROUTER_API_KEY` in your environment is picked up without renaming.

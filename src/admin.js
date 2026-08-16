@@ -18,7 +18,11 @@ export const ENV_FILE = process.env.FREECHAIN_ENV_FILE || path.join(ROOT, '.env'
 // provider slot, and the collision would make the two overwrite each other.
 export const ACCESS_KEY_VAR = 'FREECHAIN_ACCESS_KEY';
 
-// Where to send a user who needs a key for this provider.
+// Where to send a user who needs a key for this provider. Feeds the "Get a
+// key" / site buttons on the Model sources page automatically for every
+// provider here. The sidebar's static quick-link list (webui/index.html) only
+// covers providers actually in the default chain, so add an entry there too
+// when a new provider earns a permanent spot in chain.config.json.
 export const PROVIDER_LINKS = {
   openrouter: { site: 'https://openrouter.ai/', keys: 'https://openrouter.ai/keys' },
   'opencode-zen': { site: 'https://opencode.ai/zen', keys: 'https://opencode.ai/zen' },
