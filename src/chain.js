@@ -60,6 +60,15 @@ export class Cooldowns {
 // caller, so move on.
 const FATAL_STATUS = new Set([400, 422]);
 
+// OmniRoute uses a 400 wrapper when its own candidate pool is exhausted. The
+// request is valid, so let the outer FreeChain chain try its next provider.
+// A normal OmniRoute 400 remains fatal; only its diagnostic pool envelope gets
+// this treatment.
+const isOmniRoutePoolFailure = (link, status, detail) =>
+  link.provider === 'omniroute' &&
+  status === 400 &&
+  /"diagnostics"\s*:\s*\{/.test(detail);
+
 function retryAfterMs(res) {
   const raw = res.headers.get('retry-after');
   if (!raw) return undefined;
@@ -182,7 +191,7 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt } = {
 
     const detail = (await res.text().catch(() => '')).slice(0, 400);
 
-    if (FATAL_STATUS.has(res.status)) {
+    if (FATAL_STATUS.has(res.status) && !isOmniRoutePoolFailure(link, res.status, detail)) {
       record('fatal', `${res.status} ${detail}`);
       throw new ChainError(`Upstream rejected the request (${res.status}): ${detail}`, attempts);
     }

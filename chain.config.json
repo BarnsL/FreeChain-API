@@ -13,11 +13,9 @@
     { "provider": "omniroute", "model": "auto/coding:free", "note": "self-hosted router, tried first when running" },
     { "provider": "omniroute", "model": "auto/best-free" },
 
-    { "provider": "opencode-zen", "model": "north-mini-code-free" },
     { "provider": "opencode-zen", "model": "nemotron-3-ultra-free" },
     { "provider": "opencode-zen", "model": "deepseek-v4-flash-free" },
     { "provider": "opencode-zen", "model": "mimo-v2.5-free" },
-    { "provider": "opencode-zen", "model": "ling-3.0-flash-free" },
     { "provider": "opencode-zen", "model": "laguna-s-2.1-free" },
 
     { "provider": "openrouter", "model": "nvidia/nemotron-3-ultra-550b-a55b:free" },
@@ -27,9 +25,6 @@
     { "provider": "openrouter", "model": "google/gemma-4-26b-a4b-it:free" },
     { "provider": "openrouter", "model": "google/gemma-4-31b-it:free" },
     { "provider": "openrouter", "model": "poolside/laguna-s-2.1:free" },
-    { "provider": "openrouter", "model": "nvidia/nemotron-3-nano-30b-a3b:free" },
-    { "provider": "openrouter", "model": "inclusionai/ling-3.0-tiny:free" },
-
-    { "provider": "openrouter", "model": "meituan/longcat-2.0", "free": false, "note": "paid last resort" }
+    { "provider": "openrouter", "model": "nvidia/nemotron-3-nano-30b-a3b:free" }
   ]
 }

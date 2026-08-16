@@ -33,7 +33,7 @@ function chainOf(...links) {
   return {
     links: links.map((l, i) => ({
       index: i,
-      provider: 'local',
+      provider: l.provider || 'local',
       label: 'test',
       model: l.model,
       baseUrl: `http://127.0.0.1:${l.port}/v1`,
@@ -96,6 +96,28 @@ test('a 400 stops the chain instead of burning every link', async () => {
     }
   );
   a.close(); b.close();
+});
+
+test('an OmniRoute diagnostic 400 falls through to the next candidate', async () => {
+  const a = await upstream(status(400, JSON.stringify({
+    error: { message: 'internal pool exhausted' },
+    diagnostics: { attempted: 2 },
+  })));
+  const b = await upstream(ok('second'));
+  const chain = chainOf(
+    { provider: 'omniroute', model: 'coding', port: a.port },
+    { model: 'second', port: b.port }
+  );
+
+  try {
+    const { link, attempts } = await dispatch(chain, new Cooldowns(50), askBody);
+
+    assert.equal(link.model, 'second');
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts[0].outcome, 'http-error');
+  } finally {
+    a.close(); b.close();
+  }
 });
 
 test('a cooling link is demoted but still used as a last resort', async () => {
@@ -167,6 +189,39 @@ test('server exposes /v1/models, /healthz and the serving provider header', asyn
   assert.equal(chat.headers.get('x-freechain-attempts'), '2');
 
   app.close(); a.close(); b.close();
+});
+
+test('server permits OpenAI browser SDK metadata headers in CORS preflights', async () => {
+  const a = await upstream(ok('first'));
+  const app = createServer(chainOf({ model: 'first', port: a.port }));
+  await new Promise((r) => app.listen(0, '127.0.0.1', r));
+
+  const res = await fetch(`http://127.0.0.1:${app.address().port}/v1/chat/completions`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'http://localhost:5173',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers':
+        'authorization, content-type, x-stainless-lang, x-stainless-package-version, x-stainless-os, x-stainless-arch, x-stainless-runtime, x-stainless-runtime-version',
+    },
+  });
+
+  assert.equal(res.status, 204);
+  const allowedHeaders = res.headers.get('access-control-allow-headers')?.toLowerCase() ?? '';
+  for (const header of [
+    'authorization',
+    'content-type',
+    'x-stainless-lang',
+    'x-stainless-package-version',
+    'x-stainless-os',
+    'x-stainless-arch',
+    'x-stainless-runtime',
+    'x-stainless-runtime-version',
+  ]) {
+    assert.match(allowedHeaders, new RegExp(`\\b${header}\\b`));
+  }
+
+  app.close(); a.close();
 });
 
 test('server rejects a body with no messages', async () => {

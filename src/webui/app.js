@@ -243,7 +243,7 @@ function renderChain() {
         <td class="num">${l.keyCount ? `${l.keyCount} key(s) / ${l.accountCount} slot(s)` : '—'}</td>
         <td>${
           l.hasKey
-            ? '<span class="badge badge-ok"><span class="dot"></span>ready</span>'
+            ? '<span class="badge badge-ok"><span class="dot"></span>configured</span>'
             : '<span class="badge badge-warn"><span class="dot"></span>no key</span>'
         }</td>
       </tr>`

@@ -124,7 +124,7 @@ export function loadChain(file = DEFAULT_CHAIN) {
   };
 }
 
-// Reports which links are usable without ever exposing a key.
+// Reports credential configuration without contacting or exposing a provider.
 export function chainStatus(chain) {
   return chain.links.map((l) => {
     const accounts = resolveAccounts(l.provider);

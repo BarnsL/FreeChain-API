@@ -5,7 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chainStatus, resolveKeys } from './config.js';
+import { chainStatus, resolveAccounts, resolveKeys } from './config.js';
 import { Cooldowns, dispatch, ChainError } from './chain.js';
 import {
   inventory,
@@ -18,6 +18,8 @@ import {
 } from './admin.js';
 
 const WEBUI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'webui');
+const DEEP_HEALTH_MIN_INTERVAL_MS = 60_000;
+const DEEP_HEALTH_MAX_TIMEOUT_MS = 15_000;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -80,9 +82,55 @@ function serveStatic(res, pathname) {
   return true;
 }
 
+// This is deliberately separate from normal dispatch: a deep health check
+// probes each configured link exactly once and must never return provider text.
+async function probeLink(link, timeoutMs, signal) {
+  const account = resolveAccounts(link.provider)[0];
+  const startedAt = Date.now();
+  const result = {
+    index: link.index,
+    provider: link.provider,
+    model: link.model,
+    latencyMs: 0,
+    status: 'network-error',
+    reason: 'network error',
+  };
+
+  try {
+    const response = await fetch(`${link.baseUrl}/chat/completions`, {
+      method: 'POST',
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(account?.key ? { Authorization: `Bearer ${account.key}` } : {}),
+        ...link.headers,
+      },
+      body: JSON.stringify({
+        model: link.model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      }),
+    });
+    // Do not inspect the body: it may contain provider output or diagnostics.
+    response.body?.cancel().catch(() => {});
+    result.status = response.ok ? 'ok' : 'http-error';
+    result.reason = `HTTP ${response.status}`;
+  } catch (err) {
+    if (signal?.aborted) return null;
+    if (err?.name === 'TimeoutError') {
+      result.status = 'timeout';
+      result.reason = 'request timeout';
+    }
+  }
+
+  result.latencyMs = Date.now() - startedAt;
+  return result;
+}
+
 export function createServer(chain, { verbose = false, ui = true } = {}) {
   const cooldowns = new Cooldowns(chain.settings.cooldownMs);
   const stats = { served: 0, failed: 0, startedAt: Date.now() };
+  let nextDeepHealthAt = 0;
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -90,7 +138,8 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers':
+          'Content-Type, Authorization, X-Stainless-Lang, X-Stainless-Package-Version, X-Stainless-OS, X-Stainless-Arch, X-Stainless-Runtime, X-Stainless-Runtime-Version, X-Stainless-Retry-Count, X-Stainless-Timeout, X-Stainless-Helper-Method',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       });
       return res.end();
@@ -104,6 +153,48 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
         cooling: cooldowns.snapshot(),
         settings: chain.settings,
         stats: { ...stats, uptimeSeconds: Math.round((Date.now() - stats.startedAt) / 1000) },
+      });
+    }
+
+    if (url.pathname === '/v1/health/deep' && req.method === 'POST') {
+      if (!accessKeyMatches(bearerFrom(req))) {
+        return fail(res, 401, 'Invalid API key. Use the access key from the FreeChain dashboard.', {
+          code: 'invalid_api_key',
+        });
+      }
+      try {
+        await readJson(req, 16 * 1024); // request content is intentionally ignored
+      } catch (err) {
+        return fail(res, err.statusCode || 400, err.message);
+      }
+
+      const abort = new AbortController();
+      res.once('close', () => {
+        if (!res.writableEnded) abort.abort();
+      });
+
+      const now = Date.now();
+      if (now < nextDeepHealthAt) {
+        return fail(res, 429, 'Deep health checks are rate-limited.', {
+          retryAfterMs: nextDeepHealthAt - now,
+        });
+      }
+      nextDeepHealthAt = now + DEEP_HEALTH_MIN_INTERVAL_MS;
+
+      const timeoutMs = Math.min(chain.settings.requestTimeoutMs, DEEP_HEALTH_MAX_TIMEOUT_MS);
+      const links = [];
+      for (const link of chain.links) {
+        if (abort.signal.aborted) return;
+        const configured = link.keyOptional || resolveAccounts(link.provider).length > 0;
+        if (!configured) continue;
+        const result = await probeLink(link, timeoutMs, abort.signal);
+        if (abort.signal.aborted) return;
+        links.push(result);
+      }
+
+      return json(res, 200, {
+        ok: links.length > 0 && links.every((link) => link.status === 'ok'),
+        links,
       });
     }
 

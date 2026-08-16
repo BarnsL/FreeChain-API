@@ -21,10 +21,11 @@ client apps never see them, they only need the one local access key.
 ```
 freechain/
 ├── bin/
-│   └── freechain.mjs          CLI entry point. Parses flags, loads config, starts server.
+│   └── freechain.mjs          CLI parent. Parses flags and supervises the router worker.
 │
 ├── src/
 │   ├── server.js              HTTP server. OpenAI-compatible routes + admin API + static file serving.
+│   ├── supervisor.js          Bounded restart/backoff policy and local listener probe.
 │   ├── chain.js               Failover walk. Expands chain links into candidates, tries each in order.
 │   ├── config.js              Chain loader. Reads chain.config.json and resolves credentials from env.
 │   ├── providers.js           Provider catalog. Defines all known providers and their numbered account slots.
@@ -38,7 +39,10 @@ freechain/
 ├── test/
 │   ├── chain.test.js          Failover logic against real local HTTP upstreams.
 │   ├── keys.test.js           Credential resolution: slot fan-out, key rotation, env var forms.
-│   └── admin.test.js          .env round-tripping, key masking, access key gating, path traversal.
+│   ├── admin.test.js          .env round-tripping, key masking, access key gating, path traversal.
+│   ├── cli.test.js            Isolated no-UI startup and access-key gating.
+│   ├── deep-health.test.js    Explicit live-probe auth, rate-limit, redaction, and abort behavior.
+│   └── supervisor.test.js     Worker restart delay, recovery, and shutdown behavior.
 │
 ├── chain.config.json          Ordered failover chain. No secrets. Safe to commit.
 ├── .env.example               Template showing every env var the server reads.
@@ -117,8 +121,9 @@ freechain/
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/v1/chat/completions` | Access key (Bearer) | Main proxy endpoint. Walks the chain. |
+| POST | `/v1/health/deep` | Access key (Bearer) | Explicit live probe. Sends a 1-token request to every configured chain link, no more than once per minute globally. Results contain no provider bodies or credentials. |
 | GET | `/v1/models` | None | Lists "auto" plus every model in the chain. |
-| GET | `/healthz`, `/v1/status` | None | Chain health, cooling state, uptime stats. |
+| GET | `/healthz`, `/v1/status` | None | Credential configuration, cooling state, uptime stats. Does not contact providers. |
 | GET | `/admin/state` | None (loopback only) | Full inventory for the dashboard. Keys are masked. |
 | GET | `/admin/access-key` | None (loopback only) | Reveals the access key (for copy to clipboard). |
 | POST | `/admin/access-key/rotate` | None (loopback only) | Generates a new access key. Immediate effect. |
@@ -137,17 +142,16 @@ For each incoming request, the server:
 3. **Tries** each candidate via `fetch()` to the provider's `/chat/completions`.
 4. **On success**: returns the response, reports the serving provider in `X-Freechain-*` headers.
 5. **On retryable failure** (429, 5xx, network error): penalises the candidate with a cooldown, moves to the next.
-6. **On fatal failure** (400, 422): stops immediately. The request itself is malformed.
+6. **On fatal failure** (400, 422): stops immediately. OmniRoute's diagnostic 400 for an exhausted internal pool is the one exception and advances the outer chain.
 7. **If all fail**: returns 502 with the list of attempts.
 
-### Default chain order (18 links)
+### Default chain order (14 links)
 
 | Priority | Provider | Models | Free? |
 |---|---|---|---|
 | 1-2 | OmniRoute (local) | auto/coding:free, auto/best-free | Yes (no key needed) |
-| 3-8 | OpenCode Zen | 6 free models | Yes |
-| 9-17 | OpenRouter | 9 free models | Yes |
-| 18 | OpenRouter | meituan/longcat-2.0 | No (paid last resort) |
+| 3-6 | OpenCode Zen | 4 free models | Yes |
+| 7-14 | OpenRouter | 8 free models | Yes |
 
 ## Credential System
 
@@ -176,8 +180,9 @@ so existing environments work without renaming.
 
 ### Access key
 
-A locally generated `fc-...` token that gates `/v1/chat/completions`. Generated on first
-run, stored in `.env` as `FREECHAIN_ACCESS_KEY`. Compared in constant time. Can be
+A locally generated `fc-...` token that gates `/v1/chat/completions` and `/v1/health/deep`.
+Generated on the first server start, including `--no-ui`, stored in `.env` as
+`FREECHAIN_ACCESS_KEY`, and compared in constant time. Can be
 rotated from the dashboard.
 
 ## Security Model
@@ -186,8 +191,9 @@ rotated from the dashboard.
   warns when bound to anything other than 127.0.0.1.
 - **Keys never leave the server.** The admin API returns masked keys. The `inventory()`
   function masks every key before it touches the response. The test suite asserts this.
-- **Access key gating.** Every `/v1/chat/completions` request is checked against the access
-  key. Without it, other processes on the machine cannot spend the provider credentials.
+- **Access key gating.** Every `/v1/chat/completions` and `/v1/health/deep` request is checked
+  against the access key. Without it, other processes on the machine cannot spend provider
+  credentials or trigger external probes.
 - **Constant-time comparison.** `crypto.timingSafeEqual` prevents timing attacks on the
   access key.
 - **Path traversal prevention.** Static file serving checks that the resolved path starts
@@ -205,6 +211,12 @@ rotated from the dashboard.
 freechain [--port 4853] [--host 127.0.0.1] [--chain <file>] [--verbose] [--no-ui]
 freechain --status     # show which links have credentials, then exit
 ```
+
+`--worker` is an internal flag used by the normal launcher. Do not use it for
+manual starts: the default command is the supervising parent. A worker crash
+restarts after 1, 2, 4, 8, 16, then a maximum of 30 seconds. If the selected
+endpoint already responds, the parent exits without disturbing that instance.
+The supervisor does not replace a Windows sign-in or reboot launcher.
 
 ### Environment variables
 
@@ -228,7 +240,7 @@ freechain --status     # show which links have credentials, then exit
 
 Four pages served at `http://127.0.0.1:4853/`:
 
-1. **Overview**: endpoint URL, links ready/total, candidate count, requests served/failed,
+1. **Overview**: endpoint URL, configured links/total, candidate count, requests served/failed,
    per-source status cards, cooling-off table.
 2. **Access key**: reveal/copy/rotate the local API key. Code snippets (curl, Python, Node,
    env vars, editor settings) with live key substitution.
@@ -251,6 +263,11 @@ node bin/freechain.mjs --status
 node bin/freechain.mjs --port 8080 --verbose
 ```
 
+The standard command launches a parent and a router worker. Ctrl+C sends a
+clean stop to both. An unexpected worker exit keeps the same configured port
+and is restarted with bounded backoff; no scheduled task or external process
+manager is required for that recovery.
+
 ## Testing
 
 ```bash
@@ -259,12 +276,17 @@ node --test "test/*.test.js"
 
 Three test files, all using Node's built-in test runner against real local HTTP servers:
 
-- **chain.test.js** (9 tests): failover walk, rate-limit advance, fatal stop, cooling
+- **chain.test.js** (11 tests): failover walk, rate-limit advance, fatal stop, OmniRoute
+  diagnostic fallback, cooling
   demotion, model pinning, streaming pass-through, server routes.
 - **keys.test.js** (14 tests): all env var forms, slot isolation, vendor fallback, fan-out
   ordering, candidate expansion, cross-slot rotation.
 - **admin.test.js** (10 tests): .env round-tripping, key masking, access key gating,
   constant-time compare, path traversal, dashboard on/off.
+- **cli.test.js** (1 test): no-UI startup generates and requires the access key.
+- **deep-health.test.js** (4 tests): explicit probe redaction, rate limit, access control,
+  and client-disconnect cancellation.
+- **supervisor.test.js** (2 tests): bounded restart delay, worker recovery, and clean stop.
 
 ## Provider Families
 

@@ -56,14 +56,16 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
   fails early.
 
 ### FC-004: Health check endpoint with per-provider latency
-- **Status**: OPEN
-- **Priority**: P3
+- **Status**: DONE
+- **Priority**: P2
 - **Type**: Feature
-- **Description**: `/healthz` reports which links have keys but not whether the providers
-  are actually reachable. A deeper health check that probes each provider (like the
-  dashboard's Test button) would help monitoring.
-- **Acceptance**: `/v1/health/deep` sends a 1-token probe to each provider with a key
-  and reports latency and status. Rate-limited to prevent abuse.
+- **Description**: `/healthz`, `--status`, and the dashboard's configured indicators report
+  credentials but not whether each configured model is currently reachable. A deeper health
+  check must probe each chain link, not only the first model for a provider family.
+- **Resolution**: `POST /v1/health/deep` sends a 1-token probe per configured chain link and
+  reports provider, model, latency, status, and a redacted reason without response bodies or
+  credentials. It is globally rate-limited to one run per minute, and the existing configuration
+  indicators remain explicitly non-live.
 
 ### FC-005: Dashboard authentication
 - **Status**: OPEN

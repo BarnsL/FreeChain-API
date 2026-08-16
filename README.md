@@ -40,11 +40,10 @@ node bin/freechain.mjs --status
 
 ```
 ok   omniroute      no key needed      auto/coding:free
-ok   opencode-zen   3 keys / 2 slots   north-mini-code-free  [opencode-zen opencode-zen0]
+ok   opencode-zen   3 keys / 2 slots   nemotron-3-ultra-free  [opencode-zen opencode-zen0]
 ok   openrouter     5 keys / 3 slots   nvidia/nemotron-3-ultra-550b-a55b:free  [openrouter openrouter0 openrouter1]
---   longcat        —                  meituan/longcat-2.0
 
-17/18 links ready, 68 candidate(s) to try.
+14/14 links configured, 68 candidate(s) to try.
 ```
 
 ```bash
@@ -54,18 +53,30 @@ node bin/freechain.mjs
 ```
 freechain    http://127.0.0.1:4853/v1
 dashboard    http://127.0.0.1:4853/
-chain        17/18 links ready
+chain        17/18 links configured
 ```
 
 Flags: `--port`, `--host`, `--chain <file>`, `--verbose`, `--no-ui`.
 
 You don't need a key to start — open the dashboard and add one there.
 
+### Local resiliency
+
+The normal launcher is a small supervisor. It keeps the fixed endpoint on the
+same port and restarts its router worker after an unexpected exit, waiting 1,
+2, 4, 8, 16, then at most 30 seconds between attempts. Ctrl+C and normal
+termination stop both processes cleanly. Starting the command again while the
+endpoint is already live leaves the existing instance alone.
+
+This is crash recovery after FreeChain has been launched. It cannot start a
+process after a full Windows reboot, so launch FreeChain once after signing in
+if you need it then.
+
 ## Dashboard
 
 Open `http://127.0.0.1:4853/` for a web console covering everything below:
 
-- **Overview** — endpoint, links ready, candidate count, requests served, and
+- **Overview** — endpoint, configured links, candidate count, requests served, and
   which candidates are cooling off after a rate limit.
 - **Access key** — the one fixed key your apps use, with show/hide, copy and
   rotate, plus ready-made snippets for curl, Python, Node, env vars and
@@ -74,7 +85,7 @@ Open `http://127.0.0.1:4853/` for a web console covering everything below:
 - **Model sources** — every provider, its account slots, and the keys in each,
   with a one-request **Test** button per slot and a direct link to that
   provider's key page.
-- **Chain** — the ordered chain and each link's live credential status.
+- **Chain** — the ordered chain and each link's credential configuration state.
 
 The dashboard writes to `.env` on this machine. Provider keys are returned to
 the page **masked only** (`sk-or••••••1234`) — the browser can prove a key
@@ -197,6 +208,7 @@ that slot. Neither is ever the key itself.
 | Route | Purpose |
 |---|---|
 | `POST /v1/chat/completions` | Chat, streaming and non-streaming. Requires the access key |
+| `POST /v1/health/deep` | Explicit, rate-limited 1-token probe of every configured chain link. Requires the access key |
 | `GET /v1/models` | `auto` plus every distinct model in the chain |
 | `GET /healthz` | Per-link slot and key counts, and which candidates are cooling off |
 | `GET /` | Dashboard (unless `--no-ui`) |
@@ -213,9 +225,10 @@ different model than the one asked for.
 { "provider": "opencode-zen", "model": "north-mini-code-free" }
 ```
 
-`free: false` marks a paid link; it is informational and appears in
-`/v1/models`. `baseUrl` may be overridden per entry. Providers and their
-default base URLs live in `src/providers.js`.
+The shipped chain contains only free links. `free: false` is reserved for an
+explicit future custom paid link and appears in `/v1/models`. `baseUrl` may be
+overridden per entry. Providers and their default base URLs live in
+`src/providers.js`.
 
 A **candidate** is one link paired with one account slot and one of that
 slot's keys. Eighteen links across a handful of slots is easily 60+ candidates,
@@ -229,7 +242,15 @@ What advances the chain and what stops it is the core of the design:
 |---|---|
 | `429`, `5xx`, timeout, connection refused | Next candidate. That one cools off (honours `Retry-After`) |
 | `401`, `403`, `404` | Next candidate — a bad key is that account's problem |
-| `400`, `422` | **Stop.** The request is malformed; every candidate would reject it identically |
+| `400`, `422` | **Stop.** The request is malformed, except OmniRoute's diagnostic 400 for an exhausted internal pool, which advances the outer chain. |
+
+`--status`, `/healthz`, and the dashboard's configured indicator report
+credential configuration only. They do not contact providers. To deliberately
+check live reachability for every configured chain link, send an authenticated
+`POST /v1/health/deep`. It sends one 1-token request per link, at most once
+per minute for the whole server, and reports only provider, model, latency,
+outcome, and an HTTP or generic network reason. It never returns provider
+response bodies or credentials.
 
 Cooldowns are tracked per candidate, so one exhausted account never sidelines
 the others on the same provider.
@@ -242,7 +263,8 @@ everything is rate-limited, a stale one still beats no answer.
 The process holds every provider credential, so:
 
 - It binds `127.0.0.1` unless `--host` says otherwise, and warns when it does.
-- `/v1/*` requires the access key, compared in constant time.
+- `/v1/chat/completions` and `/v1/health/deep` require the access key, compared in constant time.
+- The access key is generated on the first server start, including with `--no-ui`, so every proxy route remains gated.
 - `.env` is gitignored and written `0600` where the OS supports it. Keys are
   read from the environment at request time and never logged — `--status`,
   `/healthz`, `/admin/state` and the response headers report slot names and
