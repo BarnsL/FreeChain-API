@@ -34,19 +34,20 @@ const MIME = {
   '.svg': 'image/svg+xml',
 };
 
-const json = (res, code, obj) => {
+const json = (res, code, obj, { cors = false } = {}) => {
   const body = JSON.stringify(obj);
-  res.writeHead(code, {
+  const headers = {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
-    'Access-Control-Allow-Origin': '*',
-  });
+  };
+  if (cors) headers['Access-Control-Allow-Origin'] = '*';
+  res.writeHead(code, headers);
   res.end(body);
 };
 
 // OpenAI clients expect this error envelope, not a bare string.
-const fail = (res, code, message, extra = {}) =>
-  json(res, code, { error: { message, type: 'freechain_error', ...extra } });
+const fail = (res, code, message, extra = {}, { cors = false } = {}) =>
+  json(res, code, { error: { message, type: 'freechain_error', ...extra } }, { cors });
 
 function readJson(req, limitBytes = 8 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
@@ -73,16 +74,24 @@ function readJson(req, limitBytes = 8 * 1024 * 1024) {
   });
 }
 
+const WEBUI_DIR_PREFIX = WEBUI_DIR + path.sep;
+
 function serveStatic(res, pathname) {
   const rel = pathname === '/' || pathname === '' ? 'index.html' : pathname.replace(/^\/+/, '');
   const file = path.join(WEBUI_DIR, rel);
-  // Never serve outside the UI directory, whatever the request path claims.
-  if (!file.startsWith(WEBUI_DIR) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+  if (
+    (file !== WEBUI_DIR && !file.startsWith(WEBUI_DIR_PREFIX)) ||
+    !fs.existsSync(file) ||
+    !fs.statSync(file).isFile()
+  ) {
     return false;
   }
   res.writeHead(200, {
     'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
     'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
   });
   res.end(fs.readFileSync(file));
   return true;
@@ -141,7 +150,7 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
 
-    if (req.method === 'OPTIONS') {
+    if (req.method === 'OPTIONS' && !url.pathname.startsWith('/admin/')) {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers':
@@ -159,19 +168,19 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
         cooling: cooldowns.snapshot(),
         settings: chain.settings,
         stats: { ...stats, uptimeSeconds: Math.round((Date.now() - stats.startedAt) / 1000) },
-      });
+      }, { cors: true });
     }
 
     if (url.pathname === '/v1/health/deep' && req.method === 'POST') {
       if (!accessKeyMatches(bearerFrom(req))) {
         return fail(res, 401, 'Invalid API key. Use the access key from the FreeChain dashboard.', {
           code: 'invalid_api_key',
-        });
+        }, { cors: true });
       }
       try {
-        await readJson(req, 16 * 1024); // request content is intentionally ignored
+        await readJson(req, 16 * 1024);
       } catch (err) {
-        return fail(res, err.statusCode || 400, err.message);
+        return fail(res, err.statusCode || 400, err.message, {}, { cors: true });
       }
 
       const abort = new AbortController();
@@ -183,7 +192,7 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
       if (now < nextDeepHealthAt) {
         return fail(res, 429, 'Deep health checks are rate-limited.', {
           retryAfterMs: nextDeepHealthAt - now,
-        });
+        }, { cors: true });
       }
       nextDeepHealthAt = now + DEEP_HEALTH_MIN_INTERVAL_MS;
 
@@ -201,7 +210,7 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
       return json(res, 200, {
         ok: links.length > 0 && links.every((link) => link.status === 'ok'),
         links,
-      });
+      }, { cors: true });
     }
 
     // ── Admin API, consumed by the web UI on the same origin ──────────
@@ -241,17 +250,17 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
           return json(res, 200, { ok: true, count: chain.links.length });
         }
       } catch (err) {
-        return fail(res, err.statusCode || 500, String(err.message || err));
+        const code = err.statusCode || 500;
+        return fail(res, code, code >= 500 ? 'Internal server error' : String(err.message || err));
       }
       return fail(res, 404, `No admin route for ${req.method} ${url.pathname}`);
     }
 
-    // "auto" is the point of the whole service: let the chain decide.
     if (url.pathname === '/v1/models') {
       if (!accessKeyMatches(bearerFrom(req))) {
         return fail(res, 401, 'Invalid API key. Use the access key from the FreeChain dashboard.', {
           code: 'invalid_api_key',
-        });
+        }, { cors: true });
       }
       const seen = new Set();
       const data = [{ id: 'auto', object: 'model', owned_by: 'freechain' }];
@@ -266,25 +275,23 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
           freechain: { free: l.free, keyCount, hasKey: l.keyOptional || keyCount > 0 },
         });
       }
-      return json(res, 200, { object: 'list', data });
+      return json(res, 200, { object: 'list', data }, { cors: true });
     }
 
     if (url.pathname === '/v1/chat/completions' && req.method === 'POST') {
-      // The access key is what stops any other process on the machine from
-      // spending the provider credentials this server holds.
       if (!accessKeyMatches(bearerFrom(req))) {
         return fail(res, 401, 'Invalid API key. Use the access key from the FreeChain dashboard.', {
           code: 'invalid_api_key',
-        });
+        }, { cors: true });
       }
       let body;
       try {
         body = await readJson(req);
       } catch (err) {
-        return fail(res, err.statusCode || 400, err.message);
+        return fail(res, err.statusCode || 400, err.message, {}, { cors: true });
       }
       if (!Array.isArray(body.messages) || !body.messages.length) {
-        return fail(res, 400, '"messages" must be a non-empty array');
+        return fail(res, 400, '"messages" must be a non-empty array', {}, { cors: true });
       }
 
       const abort = new AbortController();
@@ -341,13 +348,13 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
         });
         return res.end(payload);
       } catch (err) {
-        if (abort.signal.aborted) return; // client gone, nothing to answer
+        if (abort.signal.aborted) return;
         stats.failed++;
         if (err instanceof ChainError) {
-          return fail(res, 502, err.message, { attempts: err.attempts });
+          return fail(res, 502, err.message, { attempts: err.attempts }, { cors: true });
         }
         console.error('[freechain] unexpected error:', err);
-        return fail(res, 500, String(err.message || err));
+        return fail(res, 500, 'Internal server error', {}, { cors: true });
       }
     }
 

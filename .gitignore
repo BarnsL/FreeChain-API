@@ -10,6 +10,23 @@ node_modules/
 # Releases rather than committed.
 dist/
 
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Editor and OS artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
 # Local code-intelligence tooling — machine-specific, not part of the project.
 .gitnexus/
 .claude/
