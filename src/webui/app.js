@@ -185,7 +185,7 @@ async function addKey(slotId) {
   // it is sent the new key plus a marker for each key to keep.
   await api('/admin/keys', {
     method: 'POST',
-    body: JSON.stringify({ slot: slotId, keys: [...slot.keys.map((k) => ` keep:${k.index}`), value] }),
+    body: JSON.stringify({ slot: slotId, keys: [...slot.keys.map((k) => ` keep:${k.index}`), value] }),
   });
   input.value = '';
   await refresh();
@@ -195,7 +195,7 @@ async function addKey(slotId) {
 async function deleteKey(slotId, index) {
   const provider = state.providers.find((p) => p.slots.some((s) => s.id === slotId));
   const slot = provider.slots.find((s) => s.id === slotId);
-  const keep = slot.keys.filter((k) => k.index !== Number(index)).map((k) => ` keep:${k.index}`);
+  const keep = slot.keys.filter((k) => k.index !== Number(index)).map((k) => ` keep:${k.index}`);
 
   await api('/admin/keys', { method: 'POST', body: JSON.stringify({ slot: slotId, keys: keep }) });
   await refresh();

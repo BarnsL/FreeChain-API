@@ -131,7 +131,24 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 
 ## Closed Issues
 
-(None yet.)
+### FC-011: Corrupted "keep" sentinel silently destroyed provider keys
+- **Status**: DONE
+- **Priority**: P0
+- **Type**: Bug
+- **Description**: `src/webui/app.js` built the "keep this existing key" marker sent to
+  `POST /admin/keys` as `` `keep:${k.index}` ``, but a stray NUL byte sat where the
+  leading space belonged (two call sites: `addKey`, `deleteKey`), rendering
+  `"\0keep:0"` instead of `" keep:0"`. `admin.js`'s `KEEP` regex (`/^keep:(\d+)$/`)
+  never matches after `.trim()` (NUL is not whitespace), so `saveSlotKeys` fell
+  through to `return value` and stored the literal corrupted string as a brand-new
+  key. Net effect: adding or removing one key in a slot that already held another
+  silently destroyed that other key's real credential in `.env`. Found during a
+  pre-release audit; no existing test caught it because `app.js` is browser-only DOM
+  code that `node --test` cannot import to exercise directly.
+- **Resolution**: Replaced both corrupted literals with the intended `` ` keep:${k.index}` ``.
+  Added `test/source-integrity.test.js`: a byte-level scan for stray control
+  characters across `src/`, `bin/`, `scripts/`, plus a source-text check that the
+  keep-sentinel literals in `app.js` round-trip through `admin.js`'s `KEEP` regex.
 
 ---
 
