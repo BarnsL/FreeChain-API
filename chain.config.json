@@ -4,27 +4,139 @@
     "A candidate is one link paired with one configured credential, so a",
     "provider with several keys gives several chances before the chain moves on.",
     "Links whose provider has no key are skipped, so shipping more links than",
-    "you have accounts for is fine. No secrets here — safe to commit."
+    "you have accounts for is fine. No secrets here, safe to commit."
   ],
   "requestTimeoutMs": 90000,
   "cooldownMs": 60000,
-
   "chain": [
-    { "provider": "omniroute", "model": "auto/coding:free", "note": "self-hosted router, tried first when running" },
-    { "provider": "omniroute", "model": "auto/best-free" },
-
-    { "provider": "opencode-zen", "model": "nemotron-3-ultra-free" },
-    { "provider": "opencode-zen", "model": "deepseek-v4-flash-free" },
-    { "provider": "opencode-zen", "model": "mimo-v2.5-free" },
-    { "provider": "opencode-zen", "model": "laguna-s-2.1-free" },
-
-    { "provider": "openrouter", "model": "nvidia/nemotron-3-ultra-550b-a55b:free" },
-    { "provider": "openrouter", "model": "nvidia/nemotron-3-super-120b-a12b:free" },
-    { "provider": "openrouter", "model": "openai/gpt-oss-20b:free" },
-    { "provider": "openrouter", "model": "cohere/north-mini-code:free" },
-    { "provider": "openrouter", "model": "google/gemma-4-26b-a4b-it:free" },
-    { "provider": "openrouter", "model": "google/gemma-4-31b-it:free" },
-    { "provider": "openrouter", "model": "poolside/laguna-s-2.1:free" },
-    { "provider": "openrouter", "model": "nvidia/nemotron-3-nano-30b-a3b:free" }
+    {
+      "provider": "omniroute",
+      "model": "auto/coding:free",
+      "note": "self-hosted router, tried first when running"
+    },
+    {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b"
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "nemotron-3-ultra-free"
+    },
+    {
+      "provider": "groq",
+      "model": "openai/gpt-oss-120b"
+    },
+    {
+      "provider": "omniroute",
+      "model": "auto/best-free"
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "deepseek-v4-flash-free"
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "mimo-v2.5-free"
+    },
+    {
+      "provider": "opencode-zen",
+      "model": "laguna-s-2.1-free"
+    },
+    {
+      "provider": "groq",
+      "model": "llama-3.3-70b-versatile"
+    },
+    {
+      "provider": "groq",
+      "model": "qwen/qwen3.6-27b"
+    },
+    {
+      "provider": "groq",
+      "model": "openai/gpt-oss-20b"
+    },
+    {
+      "provider": "cerebras",
+      "model": "gpt-oss-120b"
+    },
+    {
+      "provider": "cerebras",
+      "model": "gemma-4-31b"
+    },
+    {
+      "provider": "cerebras",
+      "model": "zai-glm-4.7"
+    },
+    {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3-super-120b-a12b"
+    },
+    {
+      "provider": "nvidia",
+      "model": "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    },
+    {
+      "provider": "nvidia",
+      "model": "deepseek-ai/deepseek-v4-flash-0731"
+    },
+    {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3.5-lightning-30b-a3b"
+    },
+    {
+      "provider": "nvidia",
+      "model": "stepfun-ai/step-3.7-flash"
+    },
+    {
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3-nano-30b-a3b"
+    },
+    {
+      "provider": "nvidia",
+      "model": "nvidia/nvidia-nemotron-nano-9b-v2"
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.7-flash"
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.5-flash"
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.5-flash-lite"
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free"
+    },
+    {
+      "provider": "openrouter",
+      "model": "openai/gpt-oss-20b:free"
+    },
+    {
+      "provider": "openrouter",
+      "model": "cohere/north-mini-code:free"
+    },
+    {
+      "provider": "openrouter",
+      "model": "google/gemma-4-26b-a4b-it:free"
+    },
+    {
+      "provider": "openrouter",
+      "model": "google/gemma-4-31b-it:free"
+    },
+    {
+      "provider": "openrouter",
+      "model": "poolside/laguna-s-2.1:free"
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3-nano-30b-a3b:free"
+    }
   ]
 }

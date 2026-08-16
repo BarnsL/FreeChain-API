@@ -94,6 +94,17 @@ export function resolveKey(providerId) {
   return resolveKeys(providerId)[0] ?? null;
 }
 
+export function saveChainConfig(chain, file = DEFAULT_CHAIN) {
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  raw.chain = chain.links.map((l) => {
+    const entry = { provider: l.provider, model: l.model };
+    if (!l.free) entry.free = false;
+    if (l.note) entry.note = l.note;
+    return entry;
+  });
+  fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+}
+
 export function loadChain(file = DEFAULT_CHAIN) {
   if (!fs.existsSync(file)) throw new Error(`Chain config not found: ${file}`);
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));

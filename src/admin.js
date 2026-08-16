@@ -9,7 +9,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { PROVIDERS, FAMILIES, ACCOUNT_SLOTS, MAX_KEYS_PER_ACCOUNT, envBaseFor } from './providers.js';
-import { resolveKeys, resolveAccounts, chainStatus, ROOT } from './config.js';
+import { resolveKeys, resolveAccounts, chainStatus, saveChainConfig, ROOT } from './config.js';
 import { setEnvVars, reloadEnv } from './envfile.js';
 
 export const ENV_FILE = process.env.FREECHAIN_ENV_FILE || path.join(ROOT, '.env');
@@ -156,6 +156,24 @@ export function saveSlotKeys(slotId, keys) {
   for (const name of Object.keys(updates)) delete process.env[name];
   reloadEnv(ENV_FILE);
   return clean.length;
+}
+
+export function reorderChain(chain, order) {
+  if (!Array.isArray(order) || order.length !== chain.links.length) {
+    throw new Error(`order must be an array of ${chain.links.length} indices`);
+  }
+  const seen = new Set();
+  for (const idx of order) {
+    if (typeof idx !== 'number' || idx < 0 || idx >= chain.links.length || seen.has(idx)) {
+      throw new Error(`invalid or duplicate index: ${idx}`);
+    }
+    seen.add(idx);
+  }
+  chain.links = order.map((idx, pos) => {
+    const link = chain.links[idx];
+    return { ...link, index: pos };
+  });
+  saveChainConfig(chain);
 }
 
 /** Live check: does this slot actually answer for one of the chain's models? */

@@ -11,6 +11,7 @@ import {
   inventory,
   saveSlotKeys,
   testSlot,
+  reorderChain,
   getAccessKey,
   rotateAccessKey,
   accessKeyMatches,
@@ -227,6 +228,12 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
           const { slot } = await readJson(req);
           if (!slot) return fail(res, 400, 'slot is required');
           return json(res, 200, await testSlot(chain, slot));
+        }
+        if (url.pathname === '/admin/chain/reorder' && req.method === 'POST') {
+          const { order } = await readJson(req);
+          if (!Array.isArray(order)) return fail(res, 400, 'order[] is required');
+          reorderChain(chain, order);
+          return json(res, 200, { ok: true, count: chain.links.length });
         }
       } catch (err) {
         return fail(res, err.statusCode || 500, String(err.message || err));

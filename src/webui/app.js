@@ -53,6 +53,9 @@ const icon = {
   ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
   bolt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z"/></svg>',
+  grip: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>',
+  up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg>',
+  down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>',
 };
 
 // ── navigation ────────────────────────────────────────────────────────
@@ -233,10 +236,13 @@ $('#providerList').addEventListener('keydown', (e) => {
 
 // ── chain ─────────────────────────────────────────────────────────────
 
+let dragIdx = null;
+
 function renderChain() {
   $('#chainBody').innerHTML = state.chain
     .map(
-      (l, i) => `<tr>
+      (l, i) => `<tr draggable="true" data-chain-idx="${i}" class="chain-row">
+        <td class="chain-grip" title="Drag to reorder">${icon.grip}</td>
         <td class="num">${i + 1}</td>
         <td><span class="mono">${esc(l.provider)}</span>${l.free ? '' : ' <span class="badge">paid</span>'}</td>
         <td class="mono">${esc(l.model)}</td>
@@ -246,10 +252,73 @@ function renderChain() {
             ? '<span class="badge badge-ok"><span class="dot"></span>configured</span>'
             : '<span class="badge badge-warn"><span class="dot"></span>no key</span>'
         }</td>
+        <td class="chain-move">
+          <button class="btn-move" data-move-up="${i}" ${i === 0 ? 'disabled' : ''} title="Move up">${icon.up}</button>
+          <button class="btn-move" data-move-down="${i}" ${i === state.chain.length - 1 ? 'disabled' : ''} title="Move down">${icon.down}</button>
+        </td>
       </tr>`
     )
     .join('');
 }
+
+async function applyOrder(order) {
+  try {
+    await api('/admin/chain/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ order }),
+    });
+    await refresh();
+    toast('Chain reordered');
+  } catch (err) {
+    toast(err.message, true);
+    await refresh();
+  }
+}
+
+function swapChain(from, to) {
+  const order = state.chain.map((_, i) => i);
+  const [moved] = order.splice(from, 1);
+  order.splice(to, 0, moved);
+  applyOrder(order);
+}
+
+$('#chainBody').addEventListener('click', (e) => {
+  const up = e.target.closest('[data-move-up]');
+  if (up) { const i = Number(up.dataset.moveUp); if (i > 0) swapChain(i, i - 1); return; }
+  const down = e.target.closest('[data-move-down]');
+  if (down) { const i = Number(down.dataset.moveDown); if (i < state.chain.length - 1) swapChain(i, i + 1); return; }
+});
+
+$('#chainBody').addEventListener('dragstart', (e) => {
+  const row = e.target.closest('[data-chain-idx]');
+  if (!row) return;
+  dragIdx = Number(row.dataset.chainIdx);
+  row.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', String(dragIdx));
+});
+
+$('#chainBody').addEventListener('dragend', (e) => {
+  dragIdx = null;
+  $$('.chain-row', $('#chainBody')).forEach((r) => r.classList.remove('dragging', 'drag-over'));
+});
+
+$('#chainBody').addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const row = e.target.closest('[data-chain-idx]');
+  $$('.chain-row', $('#chainBody')).forEach((r) => r.classList.remove('drag-over'));
+  if (row && Number(row.dataset.chainIdx) !== dragIdx) row.classList.add('drag-over');
+});
+
+$('#chainBody').addEventListener('drop', (e) => {
+  e.preventDefault();
+  const row = e.target.closest('[data-chain-idx]');
+  if (!row || dragIdx === null) return;
+  const to = Number(row.dataset.chainIdx);
+  if (to === dragIdx) return;
+  swapChain(dragIdx, to);
+});
 
 // ── access key ────────────────────────────────────────────────────────
 

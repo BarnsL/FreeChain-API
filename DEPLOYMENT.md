@@ -129,6 +129,7 @@ freechain/
 | POST | `/admin/access-key/rotate` | None (loopback only) | Generates a new access key. Immediate effect. |
 | POST | `/admin/keys` | None (loopback only) | Save/delete keys for a provider slot. |
 | POST | `/admin/test` | None (loopback only) | Send a 1-token probe through a slot. |
+| POST | `/admin/chain/reorder` | None (loopback only) | Reorder chain links; persists to `chain.config.json`. |
 | GET | `/` | None | Dashboard (index.html). Disabled with `--no-ui`. |
 | OPTIONS | `*` | None | CORS preflight. |
 
