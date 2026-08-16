@@ -24,9 +24,36 @@ client ──► http://127.0.0.1:4853/v1  (model: "auto")
                     └─ ...            first candidate that answers wins
 ```
 
-No runtime dependencies. Node 20+.
+No runtime dependencies. Runs on Windows, macOS, and Linux.
 
-## Quick start
+## Install
+
+### Download a build (no Node needed)
+
+Grab the archive for your platform from the
+[latest release](https://github.com/BarnsL/FreeChain-API/releases/latest),
+unzip it, and run the `freechain` executable inside. Node is bundled into the
+binary, so nothing else needs installing.
+
+| Download | For |
+|---|---|
+| `freechain-win32-x64.zip` | Windows |
+| `freechain-darwin-arm64.zip` | macOS (Apple Silicon) |
+| `freechain-linux-x64.zip` | Linux |
+| `freechain-portable-node.zip` | Any OS, if you already have Node 20+ — a few hundred KB instead of ~90 MB |
+
+Keys you add are written to a `.env` file created next to the executable, so
+the whole folder stays self-contained and portable.
+
+macOS marks downloaded binaries as quarantined. If Gatekeeper blocks it:
+
+```bash
+xattr -d com.apple.quarantine ./freechain
+```
+
+### Run from source
+
+Needs Node 20+.
 
 ```bash
 cp .env.example .env
@@ -69,8 +96,19 @@ termination stop both processes cleanly. Starting the command again while the
 endpoint is already live leaves the existing instance alone.
 
 This is crash recovery after FreeChain has been launched. It cannot start a
-process after a full Windows reboot, so launch FreeChain once after signing in
-if you need it then.
+process after a full reboot, so launch FreeChain once after signing in if you
+need it then.
+
+### Building the release artifacts
+
+```bash
+npm install
+node scripts/build-release.mjs
+```
+
+Writes the executable and both zips for the current platform into `dist/`.
+Single-file executables cannot be cross-compiled, so each platform is built on
+its own CI runner (`.github/workflows/release.yml`) when a `v*` tag is pushed.
 
 ## Dashboard
 

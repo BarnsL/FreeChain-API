@@ -31,6 +31,7 @@ freechain/
 │   ├── providers.js           Provider catalog. Defines all known providers and their numbered account slots.
 │   ├── admin.js               Admin logic. Key masking, access key management, slot key CRUD, live testing.
 │   ├── envfile.js             .env reader/writer. Round-trip safe editing of credential files.
+│   ├── runtime.js             Detects a packaged single-executable build so paths resolve next to the exe.
 │   └── webui/
 │       ├── index.html         Dashboard shell. Sidebar nav, four page sections, toast overlay.
 │       ├── app.css             Full stylesheet. Dark theme, shadcn token convention, responsive.
@@ -43,6 +44,9 @@ freechain/
 │   ├── cli.test.js            Isolated no-UI startup and access-key gating.
 │   ├── deep-health.test.js    Explicit live-probe auth, rate-limit, redaction, and abort behavior.
 │   └── supervisor.test.js     Worker restart delay, recovery, and shutdown behavior.
+│
+├── scripts/
+│   └── build-release.mjs      Release builder. Bundles to CJS, produces the single executable and zips.
 │
 ├── chain.config.json          Ordered failover chain. No secrets. Safe to commit.
 ├── .env.example               Template showing every env var the server reads.

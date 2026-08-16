@@ -6,6 +6,10 @@
 node_modules/
 *.log
 
+# Release artifacts — built by scripts/build-release.mjs, published to GitHub
+# Releases rather than committed.
+dist/
+
 # Local code-intelligence tooling — machine-specific, not part of the project.
 .gitnexus/
 .claude/

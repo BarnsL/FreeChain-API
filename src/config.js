@@ -8,8 +8,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { providerDef, familyMembers, MAX_KEYS_PER_ACCOUNT } from './providers.js';
+import { IS_SEA, EXE_DIR } from './runtime.js';
 
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// A packaged binary carries chain.config.json, .env, and webui/ alongside
+// the executable itself rather than alongside this source file.
+export const ROOT = IS_SEA
+  ? EXE_DIR
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const DEFAULT_CHAIN = path.join(ROOT, 'chain.config.json');
 

@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-import { fork } from 'node:child_process';
+import { fork, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { loadChain, loadDotEnv, chainStatus, ROOT } from '../src/config.js';
 import { createServer } from '../src/server.js';
 import { ensureAccessKey } from '../src/admin.js';
 import { isPortListening, superviseWorker } from '../src/supervisor.js';
+import { IS_SEA } from '../src/runtime.js';
 
-const argv = process.argv.slice(2);
+// A packaged binary has no [node, scriptPath, ...args] triple — process.argv
+// is just [exePath, ...args], one entry shorter than a normal invocation.
+const argv = IS_SEA ? process.argv.slice(1) : process.argv.slice(2);
 const flag = (name, fallback) => {
   const i = argv.indexOf(name);
   return i !== -1 && argv[i + 1] ? argv[i + 1] : fallback;
@@ -61,17 +64,27 @@ const port = Number(flag('--port', process.env.FREECHAIN_PORT || 4853));
 const host = flag('--host', process.env.FREECHAIN_HOST || '127.0.0.1');
 const ui = !has('--no-ui');
 
-if (!isWorker) {
+// Wrapped rather than top-level await: the release build bundles this file to
+// CommonJS for single-executable packaging, which has no top-level await.
+async function startSupervisor() {
   if (await isPortListening({ host, port })) {
     console.log(`freechain already running at http://${host}:${port}/v1`);
   } else {
     // The parent owns recovery; the child intentionally executes this same
     // familiar startup path so its API and credential behavior stay unchanged.
+    // A packaged binary can't fork a separate module file — it re-invokes
+    // itself instead, since the exe IS the script.
     const supervisor = superviseWorker({
-      spawnWorker: () => fork(fileURLToPath(import.meta.url), [...argv, '--worker'], {
-        cwd: process.cwd(),
-        env: process.env,
-      }),
+      spawnWorker: () => (IS_SEA
+        ? spawn(process.execPath, [...argv, '--worker'], {
+            cwd: process.cwd(),
+            env: process.env,
+            stdio: 'inherit',
+          })
+        : fork(fileURLToPath(import.meta.url), [...argv, '--worker'], {
+            cwd: process.cwd(),
+            env: process.env,
+          })),
     });
     const stop = (signal) => {
       console.log(`[supervisor] received ${signal}; stopping worker`);
@@ -81,7 +94,9 @@ if (!isWorker) {
     process.once('SIGTERM', () => stop('SIGTERM'));
     supervisor.start();
   }
-} else {
+}
+
+function startWorker() {
   // Generated on first run even without the dashboard: every proxy route is gated.
   const accessKey = ensureAccessKey();
 
@@ -104,5 +119,14 @@ if (!isWorker) {
     if (host !== '127.0.0.1' && host !== 'localhost') {
       console.warn(`\nWARNING: bound to ${host}, not loopback — this port proxies your API keys.`);
     }
+  });
+}
+
+if (isWorker) {
+  startWorker();
+} else {
+  startSupervisor().catch((err) => {
+    console.error(`freechain: ${err.message}`);
+    process.exit(1);
   });
 }

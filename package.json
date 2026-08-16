@@ -11,7 +11,8 @@
   },
   "scripts": {
     "start": "node bin/freechain.mjs",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "build": "node scripts/build-release.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -20,6 +21,18 @@
     "type": "git",
     "url": "git+https://github.com/BarnsL/FreeChain-API.git"
   },
-  "keywords": ["openai", "llm", "failover", "router", "proxy", "openrouter", "free-models"],
-  "license": "MIT"
+  "keywords": [
+    "openai",
+    "llm",
+    "failover",
+    "router",
+    "proxy",
+    "openrouter",
+    "free-models"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6"
+  }
 }

@@ -1,0 +1,69 @@
+name: Release binaries
+
+# Single-executable builds cannot be cross-compiled: injecting into another
+# platform's Node binary produces something that will not run or sign. Each
+# platform is therefore built on its own runner.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: freechain-win32-x64
+          - os: macos-latest
+            artifact: freechain-darwin-arm64
+          - os: ubuntu-latest
+            artifact: freechain-linux-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: node scripts/build-release.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.zip
+            dist/freechain-*-*
+            !dist/freechain-*-*/**
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Attach binaries to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          find artifacts -type f \( -name '*.zip' -o -name 'freechain-*' \) -print
+          gh release upload "${GITHUB_REF_NAME}" \
+            $(find artifacts -type f \( -name '*.zip' -o -name 'freechain-*' \) -print) \
+            --clobber --repo "${GITHUB_REPOSITORY}"

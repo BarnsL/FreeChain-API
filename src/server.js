@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chainStatus, resolveAccounts, resolveKeys } from './config.js';
 import { Cooldowns, dispatch, ChainError } from './chain.js';
+import { IS_SEA, EXE_DIR } from './runtime.js';
 import {
   inventory,
   saveSlotKeys,
@@ -18,7 +19,11 @@ import {
   bearerFrom,
 } from './admin.js';
 
-const WEBUI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'webui');
+// A packaged binary ships its webui/ folder next to the executable, not
+// next to this source file.
+const WEBUI_DIR = IS_SEA
+  ? path.join(EXE_DIR, 'webui')
+  : path.join(path.dirname(fileURLToPath(import.meta.url)), 'webui');
 const DEEP_HEALTH_MIN_INTERVAL_MS = 60_000;
 const DEEP_HEALTH_MAX_TIMEOUT_MS = 15_000;
 
