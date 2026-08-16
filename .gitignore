@@ -1,0 +1,7 @@
+# Credentials — never commit. freechain reads keys from here at runtime.
+.env
+.env.*
+!.env.example
+
+node_modules/
+*.log
