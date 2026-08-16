@@ -1,15 +1,15 @@
 // The failover walk.
 //
 // One request enters; candidates are tried in order until one answers.
-// A candidate is a (chain link × credential) pair, so a provider configured
-// with three keys gives three chances before the chain moves on — a rate limit
-// is usually per-account, not per-provider.
+// A candidate is a (chain link × account slot × key) triple, so a link whose
+// provider has three accounts of two keys each gives six chances before the
+// chain moves on — a rate limit is usually per-account, not per-provider.
 //
 // Which failures advance and which stop is the whole design: advancing on a
 // client's own malformed request would burn every provider on an error that
 // none of them can fix.
 
-import { resolveKeys } from './config.js';
+import { resolveAccounts } from './config.js';
 
 export class ChainError extends Error {
   constructor(message, attempts) {
@@ -70,8 +70,10 @@ function retryAfterMs(res) {
 }
 
 /**
- * Expand the chain into (link, credential) candidates.
- * Keys are read fresh each call so a .env edit takes effect without a restart.
+ * Expand the chain into (link, account slot, key) candidates.
+ * Credentials are read fresh each call so a .env edit takes effect without a
+ * restart. `keyIndex` counts keys within one account slot, so it stays a
+ * meaningful ordinal when several slots are configured.
  */
 export function candidatesFor(chain, requestedModel) {
   const wanted = requestedModel && requestedModel !== 'auto' ? requestedModel : null;
@@ -80,13 +82,28 @@ export function candidatesFor(chain, requestedModel) {
   for (const link of chain.links) {
     if (wanted && link.model !== wanted && `${link.provider}/${link.model}` !== wanted) continue;
 
-    const keys = resolveKeys(link.provider);
-    if (keys.length) {
-      keys.forEach((key, keyIndex) =>
-        out.push({ link, key, keyIndex, id: `${link.index}:${keyIndex}` })
-      );
+    const accounts = resolveAccounts(link.provider);
+    if (accounts.length) {
+      const perSlot = new Map();
+      for (const { provider, key } of accounts) {
+        const keyIndex = perSlot.get(provider) ?? 0;
+        perSlot.set(provider, keyIndex + 1);
+        out.push({
+          link,
+          provider,
+          key,
+          keyIndex,
+          id: `${link.index}:${provider}:${keyIndex}`,
+        });
+      }
     } else if (link.keyOptional) {
-      out.push({ link, key: null, keyIndex: 0, id: `${link.index}:0` });
+      out.push({
+        link,
+        provider: link.provider,
+        key: null,
+        keyIndex: 0,
+        id: `${link.index}:${link.provider}:0`,
+      });
     }
   }
   return out;
@@ -95,7 +112,8 @@ export function candidatesFor(chain, requestedModel) {
 /**
  * Try each candidate until one responds.
  * `onAttempt` receives every attempt so callers can log or surface them.
- * Returns { response, link, keyIndex, attempts } — response is a live Response.
+ * Returns { response, link, provider, keyIndex, attempts }, where `provider` is
+ * the account slot that answered. `response` is a live Response.
  */
 export async function dispatch(chain, cooldowns, body, { signal, onAttempt } = {}) {
   const candidates = candidatesFor(chain, body.model);
@@ -118,14 +136,14 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt } = {
   const order = [...ready, ...cooling].slice(0, limit);
 
   for (const cand of order) {
-    const { link, key, keyIndex } = cand;
+    const { link, provider, key, keyIndex } = cand;
     const started = Date.now();
     const timeout = AbortSignal.timeout(chain.settings.requestTimeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
     const record = (outcome, detail) => {
       const attempt = {
-        provider: link.provider,
+        provider, // the account slot that was tried, e.g. "openrouter2"
         model: link.model,
         keyIndex,
         outcome,
@@ -159,7 +177,7 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt } = {
     if (res.ok) {
       cooldowns.clear(cand.id);
       record('ok', `${res.status}`);
-      return { response: res, link, keyIndex, attempts };
+      return { response: res, link, provider, keyIndex, attempts };
     }
 
     const detail = (await res.text().catch(() => '')).slice(0, 400);

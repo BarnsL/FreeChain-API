@@ -37,8 +37,13 @@ const ready = status.filter((l) => l.hasKey);
 
 if (has('--status')) {
   for (const l of status) {
-    const keys = l.keyCount ? `${l.keyCount} key${l.keyCount > 1 ? 's' : ''}` : l.hasKey ? 'no key needed' : '—';
-    console.log(`${l.hasKey ? 'ok  ' : '--  '} ${l.provider.padEnd(16)} ${keys.padEnd(14)} ${l.model}`);
+    const creds = l.keyCount
+      ? `${l.keyCount} key${l.keyCount > 1 ? 's' : ''} / ${l.accountCount} slot${l.accountCount > 1 ? 's' : ''}`
+      : l.hasKey
+        ? 'no key needed'
+        : '—';
+    const slots = l.slots.length > 1 ? `  [${l.slots.join(' ')}]` : '';
+    console.log(`${l.hasKey ? 'ok  ' : '--  '} ${l.provider.padEnd(14)} ${creds.padEnd(18)} ${l.model}${slots}`);
   }
   const candidates = status.reduce((n, l) => n + (l.keyCount || (l.hasKey ? 1 : 0)), 0);
   console.log(`\n${ready.length}/${status.length} links ready, ${candidates} candidate(s) to try.`);

@@ -7,14 +7,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { providerDef } from './providers.js';
+import { providerDef, familyMembers, MAX_KEYS_PER_ACCOUNT } from './providers.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const DEFAULT_CHAIN = path.join(ROOT, 'chain.config.json');
-
-// How many FREECHAIN_X_API_KEY_<n> slots are probed per base name.
-const MAX_NUMBERED_KEYS = 32;
 
 // Minimal KEY=VALUE reader. Deliberately not a full dotenv: no export
 // keywords, no interpolation, no multi-line values — a key is one line.
@@ -48,17 +45,18 @@ const splitList = (raw) =>
     .filter(Boolean);
 
 /**
- * All credentials configured for a provider, in priority order.
+ * All credentials configured for one account slot, in priority order.
  *
- * For each base name (e.g. FREECHAIN_OPENROUTER_API_KEY) three forms are
- * accepted, so several accounts on one provider can be rotated through:
+ * For each base name (e.g. FREECHAIN_OPENROUTER0_API_KEY) three forms are
+ * accepted, so a single account can carry several keys:
  *
- *   FREECHAIN_OPENROUTER_API_KEY    = k1              single
- *   FREECHAIN_OPENROUTER_API_KEYS   = k1,k2,k3        comma/space separated
- *   FREECHAIN_OPENROUTER_API_KEY_1  = k1              numbered, 1..32
- *   FREECHAIN_OPENROUTER_API_KEY_2  = k2
+ *   FREECHAIN_OPENROUTER0_API_KEY    = k1             single
+ *   FREECHAIN_OPENROUTER0_API_KEYS   = k1,k2,k3       comma/space separated
+ *   FREECHAIN_OPENROUTER0_API_KEY_1  = k1             numbered, 1..10
+ *   FREECHAIN_OPENROUTER0_API_KEY_2  = k2
  *
- * Duplicates are collapsed so the same key is never tried twice in a row.
+ * Duplicates are collapsed so the same key is never tried twice in a row, and
+ * the total is capped at MAX_KEYS_PER_ACCOUNT.
  */
 export function resolveKeys(providerId) {
   const def = providerDef(providerId);
@@ -69,13 +67,26 @@ export function resolveKeys(providerId) {
       const raw = process.env[name];
       if (raw && raw.trim()) found.push(...splitList(raw));
     }
-    for (let n = 1; n <= MAX_NUMBERED_KEYS; n++) {
+    for (let n = 1; n <= MAX_KEYS_PER_ACCOUNT; n++) {
       const raw = process.env[`${base}_${n}`];
       if (raw && raw.trim()) found.push(...splitList(raw));
     }
   }
 
-  return [...new Set(found)];
+  return [...new Set(found)].slice(0, MAX_KEYS_PER_ACCOUNT);
+}
+
+/**
+ * Every (account slot, key) pair a chain link can draw on, in order.
+ * A bare family id fans out across its numbered slots; a numbered id is
+ * pinned to itself. Slots with no key contribute nothing.
+ */
+export function resolveAccounts(providerId) {
+  const out = [];
+  for (const member of familyMembers(providerId)) {
+    for (const key of resolveKeys(member)) out.push({ provider: member, key });
+  }
+  return out;
 }
 
 /** First configured key, or null. Kept for callers that only need presence. */
@@ -116,14 +127,18 @@ export function loadChain(file = DEFAULT_CHAIN) {
 // Reports which links are usable without ever exposing a key.
 export function chainStatus(chain) {
   return chain.links.map((l) => {
-    const keyCount = resolveKeys(l.provider).length;
+    const accounts = resolveAccounts(l.provider);
+    // Which numbered slots actually contributed, for the status table.
+    const slots = [...new Set(accounts.map((a) => a.provider))];
     return {
       index: l.index,
       provider: l.provider,
       model: l.model,
       free: l.free,
-      keyCount,
-      hasKey: l.keyOptional || keyCount > 0,
+      slots,
+      accountCount: slots.length,
+      keyCount: accounts.length,
+      hasKey: l.keyOptional || accounts.length > 0,
     };
   });
 }

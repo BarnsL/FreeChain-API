@@ -102,7 +102,7 @@ test('a cooling link is demoted but still used as a last resort', async () => {
   const a = await upstream(ok('first'));
   const chain = chainOf({ model: 'first', port: a.port });
   const cooldowns = new Cooldowns(60_000);
-  cooldowns.penalise('0:0', 'http 429');
+  cooldowns.penalise('0:local:0', 'http 429');
 
   const { link } = await dispatch(chain, cooldowns, askBody);
   assert.equal(link.model, 'first', 'sole link must still answer while cooling');
@@ -113,10 +113,10 @@ test('a success clears an earlier cooldown', async () => {
   const a = await upstream(ok('first'));
   const chain = chainOf({ model: 'first', port: a.port });
   const cooldowns = new Cooldowns(60_000);
-  cooldowns.penalise('0:0', 'http 500');
+  cooldowns.penalise('0:local:0', 'http 500');
 
   await dispatch(chain, cooldowns, askBody);
-  assert.equal(cooldowns.isCooling('0:0'), false);
+  assert.equal(cooldowns.isCooling('0:local:0'), false);
   a.close();
 });
 

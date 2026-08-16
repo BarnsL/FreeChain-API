@@ -104,7 +104,7 @@ export function createServer(chain, { verbose = false } = {}) {
       });
 
       try {
-        const { response, link, keyIndex, attempts } = await dispatch(chain, cooldowns, body, {
+        const { response, link, provider, keyIndex, attempts } = await dispatch(chain, cooldowns, body, {
           signal: abort.signal,
           onAttempt: (a) => {
             if (verbose || a.outcome !== 'ok') {
@@ -117,10 +117,10 @@ export function createServer(chain, { verbose = false } = {}) {
 
         // Tell the caller which link actually served it — without this the
         // failover is invisible and impossible to debug from the client side.
-        // The key index identifies which configured credential answered. It is
-        // an ordinal, never the key itself.
+        // Provider is the account slot that answered (e.g. "openrouter2") and
+        // key index is its ordinal within that slot. Never the key itself.
         const served = {
-          'X-Freechain-Provider': link.provider,
+          'X-Freechain-Provider': provider,
           'X-Freechain-Model': link.model,
           'X-Freechain-Key-Index': String(keyIndex),
           'X-Freechain-Attempts': String(attempts.length),
