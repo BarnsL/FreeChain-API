@@ -236,6 +236,11 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
 
     // "auto" is the point of the whole service: let the chain decide.
     if (url.pathname === '/v1/models') {
+      if (!accessKeyMatches(bearerFrom(req))) {
+        return fail(res, 401, 'Invalid API key. Use the access key from the FreeChain dashboard.', {
+          code: 'invalid_api_key',
+        });
+      }
       const seen = new Set();
       const data = [{ id: 'auto', object: 'model', owned_by: 'freechain' }];
       for (const l of chain.links) {

@@ -209,7 +209,7 @@ that slot. Neither is ever the key itself.
 |---|---|
 | `POST /v1/chat/completions` | Chat, streaming and non-streaming. Requires the access key |
 | `POST /v1/health/deep` | Explicit, rate-limited 1-token probe of every configured chain link. Requires the access key |
-| `GET /v1/models` | `auto` plus every distinct model in the chain |
+| `GET /v1/models` | `auto` plus every distinct model in the chain. Requires the access key |
 | `GET /healthz` | Per-link slot and key counts, and which candidates are cooling off |
 | `GET /` | Dashboard (unless `--no-ui`) |
 

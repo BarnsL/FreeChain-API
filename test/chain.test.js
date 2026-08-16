@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { Cooldowns, dispatch, ChainError } from '../src/chain.js';
 import { createServer } from '../src/server.js';
+import { ACCESS_KEY_VAR } from '../src/admin.js';
 
 function upstream(handler) {
   const server = http.createServer((req, res) => {
@@ -163,7 +164,7 @@ test('an unknown model is refused rather than silently rerouted', async () => {
   a.close();
 });
 
-test('server exposes /v1/models, /healthz and the serving provider header', async () => {
+test('server requires an access key to list models', async () => {
   const a = await upstream(status(429));
   const b = await upstream(ok('second'));
   const chain = chainOf({ model: 'first', port: a.port }, { model: 'second', port: b.port });
@@ -171,24 +172,38 @@ test('server exposes /v1/models, /healthz and the serving provider header', asyn
   const app = createServer(chain);
   await new Promise((r) => app.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${app.address().port}`;
+  const priorAccessKey = process.env[ACCESS_KEY_VAR];
+  process.env[ACCESS_KEY_VAR] = 'test-model-discovery-access-key';
 
-  const models = await (await fetch(`${base}/v1/models`)).json();
-  assert.deepEqual(models.data.map((m) => m.id), ['auto', 'first', 'second']);
+  try {
+    const deniedModels = await fetch(`${base}/v1/models`);
+    assert.equal(deniedModels.status, 401);
 
-  const health = await (await fetch(`${base}/healthz`)).json();
-  assert.equal(health.ok, true);
-  assert.equal(health.links.length, 2);
+    const models = await (await fetch(`${base}/v1/models`, {
+      headers: { Authorization: 'Bearer test-model-discovery-access-key' },
+    })).json();
+    assert.deepEqual(models.data.map((m) => m.id), ['auto', 'first', 'second']);
 
-  const chat = await fetch(`${base}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'auto', ...askBody }),
-  });
-  assert.equal(chat.status, 200);
-  assert.equal(chat.headers.get('x-freechain-model'), 'second');
-  assert.equal(chat.headers.get('x-freechain-attempts'), '2');
+    const health = await (await fetch(`${base}/healthz`)).json();
+    assert.equal(health.ok, true);
+    assert.equal(health.links.length, 2);
 
-  app.close(); a.close(); b.close();
+    const chat = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-model-discovery-access-key',
+      },
+      body: JSON.stringify({ model: 'auto', ...askBody }),
+    });
+    assert.equal(chat.status, 200);
+    assert.equal(chat.headers.get('x-freechain-model'), 'second');
+    assert.equal(chat.headers.get('x-freechain-attempts'), '2');
+  } finally {
+    app.close(); a.close(); b.close();
+    if (priorAccessKey === undefined) delete process.env[ACCESS_KEY_VAR];
+    else process.env[ACCESS_KEY_VAR] = priorAccessKey;
+  }
 });
 
 test('server permits OpenAI browser SDK metadata headers in CORS preflights', async () => {

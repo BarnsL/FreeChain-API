@@ -9,5 +9,6 @@ node_modules/
 # Local code-intelligence tooling — machine-specific, not part of the project.
 .gitnexus/
 .claude/
+.serena/
 CLAUDE.md
 AGENTS.md

@@ -67,3 +67,18 @@ Observations captured during task-oriented work.
 **Suggested improvement:** For local integrations, report listener health, process supervision, and client credential retention as separate checks, then prescribe a fixed-port supervised service plus the client’s supported secure credential path.
 
 **Principle:** A stable local URL does not guarantee a persistent process or a persistent client authorization state.
+
+### Observation 5: Redact repository-security scan output by construction
+
+**Status:** OPEN
+**Date:** 2026-08-16
+**Session context:** Repository privacy and API-boundary audit
+**Skill:** verification-before-completion
+**Type:** open-source
+**Phase/Area:** Security verification
+
+**Issue:** A conventional text search can echo the very credential it is meant to detect, and a local-only API route can still expose configuration metadata when its access boundary is inconsistent.
+
+**Suggested improvement:** Security verification should report only revision, file, line, and detector type, scan reachable history as well as the working tree, and exercise every claimed authenticated route without a credential.
+
+**Principle:** A secret scan and an access-control check are trustworthy only when their evidence cannot itself disclose a secret.

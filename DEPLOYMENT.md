@@ -122,7 +122,7 @@ freechain/
 |---|---|---|---|
 | POST | `/v1/chat/completions` | Access key (Bearer) | Main proxy endpoint. Walks the chain. |
 | POST | `/v1/health/deep` | Access key (Bearer) | Explicit live probe. Sends a 1-token request to every configured chain link, no more than once per minute globally. Results contain no provider bodies or credentials. |
-| GET | `/v1/models` | None | Lists "auto" plus every model in the chain. |
+| GET | `/v1/models` | Access key (Bearer) | Lists "auto" plus every model in the chain. |
 | GET | `/healthz`, `/v1/status` | None | Credential configuration, cooling state, uptime stats. Does not contact providers. |
 | GET | `/admin/state` | None (loopback only) | Full inventory for the dashboard. Keys are masked. |
 | GET | `/admin/access-key` | None (loopback only) | Reveals the access key (for copy to clipboard). |
