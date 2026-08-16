@@ -2,8 +2,29 @@
 // can talk to this: editor assistants, agent frameworks, curl, the OpenAI SDKs.
 
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chainStatus, resolveKeys } from './config.js';
 import { Cooldowns, dispatch, ChainError } from './chain.js';
+import {
+  inventory,
+  saveSlotKeys,
+  testSlot,
+  getAccessKey,
+  rotateAccessKey,
+  accessKeyMatches,
+  bearerFrom,
+} from './admin.js';
+
+const WEBUI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'webui');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.svg': 'image/svg+xml',
+};
 
 const json = (res, code, obj) => {
   const body = JSON.stringify(obj);
@@ -44,8 +65,24 @@ function readJson(req, limitBytes = 8 * 1024 * 1024) {
   });
 }
 
-export function createServer(chain, { verbose = false } = {}) {
+function serveStatic(res, pathname) {
+  const rel = pathname === '/' || pathname === '' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const file = path.join(WEBUI_DIR, rel);
+  // Never serve outside the UI directory, whatever the request path claims.
+  if (!file.startsWith(WEBUI_DIR) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+    return false;
+  }
+  res.writeHead(200, {
+    'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
+    'Cache-Control': 'no-store',
+  });
+  res.end(fs.readFileSync(file));
+  return true;
+}
+
+export function createServer(chain, { verbose = false, ui = true } = {}) {
   const cooldowns = new Cooldowns(chain.settings.cooldownMs);
+  const stats = { served: 0, failed: 0, startedAt: Date.now() };
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
@@ -66,7 +103,44 @@ export function createServer(chain, { verbose = false } = {}) {
         links: status,
         cooling: cooldowns.snapshot(),
         settings: chain.settings,
+        stats: { ...stats, uptimeSeconds: Math.round((Date.now() - stats.startedAt) / 1000) },
       });
+    }
+
+    // ── Admin API, consumed by the web UI on the same origin ──────────
+    if (ui && url.pathname.startsWith('/admin/')) {
+      try {
+        if (url.pathname === '/admin/state' && req.method === 'GET') {
+          return json(res, 200, {
+            ...inventory(chain),
+            accessKeyMasked: getAccessKey() ? '••••••••' : null,
+            cooling: cooldowns.snapshot(),
+            stats: { ...stats, uptimeSeconds: Math.round((Date.now() - stats.startedAt) / 1000) },
+          });
+        }
+        // Revealed only on explicit request: this key is meant to be copied
+        // into other apps, unlike the provider keys which never leave here.
+        if (url.pathname === '/admin/access-key' && req.method === 'GET') {
+          return json(res, 200, { key: getAccessKey() });
+        }
+        if (url.pathname === '/admin/access-key/rotate' && req.method === 'POST') {
+          return json(res, 200, { key: rotateAccessKey() });
+        }
+        if (url.pathname === '/admin/keys' && req.method === 'POST') {
+          const { slot, keys } = await readJson(req);
+          if (!slot || !Array.isArray(keys)) return fail(res, 400, 'slot and keys[] are required');
+          const count = saveSlotKeys(slot, keys);
+          return json(res, 200, { slot, count });
+        }
+        if (url.pathname === '/admin/test' && req.method === 'POST') {
+          const { slot } = await readJson(req);
+          if (!slot) return fail(res, 400, 'slot is required');
+          return json(res, 200, await testSlot(chain, slot));
+        }
+      } catch (err) {
+        return fail(res, err.statusCode || 500, String(err.message || err));
+      }
+      return fail(res, 404, `No admin route for ${req.method} ${url.pathname}`);
     }
 
     // "auto" is the point of the whole service: let the chain decide.
@@ -88,6 +162,13 @@ export function createServer(chain, { verbose = false } = {}) {
     }
 
     if (url.pathname === '/v1/chat/completions' && req.method === 'POST') {
+      // The access key is what stops any other process on the machine from
+      // spending the provider credentials this server holds.
+      if (!accessKeyMatches(bearerFrom(req))) {
+        return fail(res, 401, 'Invalid API key. Use the access key from the FreeChain dashboard.', {
+          code: 'invalid_api_key',
+        });
+      }
       let body;
       try {
         body = await readJson(req);
@@ -129,6 +210,7 @@ export function createServer(chain, { verbose = false } = {}) {
             'X-Freechain-Provider, X-Freechain-Model, X-Freechain-Key-Index, X-Freechain-Attempts',
         };
 
+        stats.served++;
         if (body.stream) {
           res.writeHead(200, {
             ...served,
@@ -152,6 +234,7 @@ export function createServer(chain, { verbose = false } = {}) {
         return res.end(payload);
       } catch (err) {
         if (abort.signal.aborted) return; // client gone, nothing to answer
+        stats.failed++;
         if (err instanceof ChainError) {
           return fail(res, 502, err.message, { attempts: err.attempts });
         }
@@ -159,6 +242,8 @@ export function createServer(chain, { verbose = false } = {}) {
         return fail(res, 500, String(err.message || err));
       }
     }
+
+    if (ui && req.method === 'GET' && serveStatic(res, url.pathname)) return;
 
     return fail(res, 404, `No route for ${req.method} ${url.pathname}`);
   });

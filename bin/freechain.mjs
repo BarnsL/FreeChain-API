@@ -2,6 +2,7 @@
 import path from 'node:path';
 import { loadChain, loadDotEnv, chainStatus, ROOT } from '../src/config.js';
 import { createServer } from '../src/server.js';
+import { ensureAccessKey } from '../src/admin.js';
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -50,25 +51,32 @@ if (has('--status')) {
   process.exit(ready.length ? 0 : 1);
 }
 
-if (!ready.length) {
-  console.error(
-    'freechain: no chain link has a credential.\n' +
-      `Copy .env.example to .env and fill in at least one key, then retry.\n` +
-      `Run "freechain --status" to see the chain.`
-  );
-  process.exit(1);
-}
-
 const port = Number(flag('--port', process.env.FREECHAIN_PORT || 4853));
 // Loopback by default: this process holds every provider credential, so it
 // must be opted in to listening on anything wider.
 const host = flag('--host', process.env.FREECHAIN_HOST || '127.0.0.1');
+const ui = !has('--no-ui');
 
-createServer(chain, { verbose: has('--verbose') }).listen(port, host, () => {
-  console.log(`freechain   http://${host}:${port}/v1`);
-  console.log(`chain       ${ready.length}/${status.length} links ready (${chainFile})`);
-  console.log(`first up    ${ready[0].provider} / ${ready[0].model}`);
+// Generated on first run so the dashboard always has a key to hand out.
+const accessKey = ui ? ensureAccessKey() : null;
+
+createServer(chain, { verbose: has('--verbose'), ui }).listen(port, host, () => {
+  const withKeys = status.filter((l) => l.keyCount > 0);
+  console.log(`freechain    http://${host}:${port}/v1`);
+  if (ui) console.log(`dashboard    http://${host}:${port}/`);
+  console.log(`chain        ${ready.length}/${status.length} links ready (${chainFile})`);
+
+  if (!withKeys.length) {
+    // Not fatal: the dashboard is how a user is meant to add their first key,
+    // so refusing to start here would leave them nowhere to do it.
+    console.log('');
+    console.log('No model source keys configured yet — requests will fail until you add one.');
+    if (ui) console.log(`Add one at   http://${host}:${port}/  →  Model sources`);
+  } else if (accessKey) {
+    console.log(`access key   set (reveal it in the dashboard)`);
+  }
+
   if (host !== '127.0.0.1' && host !== 'localhost') {
-    console.warn(`WARNING: bound to ${host}, not loopback — this port proxies your API keys.`);
+    console.warn(`\nWARNING: bound to ${host}, not loopback — this port proxies your API keys.`);
   }
 });

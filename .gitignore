@@ -5,3 +5,9 @@
 
 node_modules/
 *.log
+
+# Local code-intelligence tooling — machine-specific, not part of the project.
+.gitnexus/
+.claude/
+CLAUDE.md
+AGENTS.md

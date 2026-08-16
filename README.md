@@ -51,8 +51,49 @@ ok   openrouter     5 keys / 3 slots   nvidia/nemotron-3-ultra-550b-a55b:free  [
 node bin/freechain.mjs
 ```
 
-Serves `http://127.0.0.1:4853/v1`. Flags: `--port`, `--host`, `--chain <file>`,
-`--verbose`.
+```
+freechain    http://127.0.0.1:4853/v1
+dashboard    http://127.0.0.1:4853/
+chain        17/18 links ready
+```
+
+Flags: `--port`, `--host`, `--chain <file>`, `--verbose`, `--no-ui`.
+
+You don't need a key to start — open the dashboard and add one there.
+
+## Dashboard
+
+Open `http://127.0.0.1:4853/` for a web console covering everything below:
+
+- **Overview** — endpoint, links ready, candidate count, requests served, and
+  which candidates are cooling off after a rate limit.
+- **Access key** — the one fixed key your apps use, with show/hide, copy and
+  rotate, plus ready-made snippets for curl, Python, Node, env vars and
+  editor GUIs. Snippets show a placeholder until you reveal the key, so a
+  screenshot of the default view leaks nothing.
+- **Model sources** — every provider, its account slots, and the keys in each,
+  with a one-request **Test** button per slot and a direct link to that
+  provider's key page.
+- **Chain** — the ordered chain and each link's live credential status.
+
+The dashboard writes to `.env` on this machine. Provider keys are returned to
+the page **masked only** (`sk-or••••••1234`) — the browser can prove a key
+exists and delete it, but can never read one back. Only the access key, which
+exists to be copied into other apps, is revealed on request. `--no-ui` disables
+the dashboard and the admin API entirely.
+
+### The access key
+
+FreeChain generates one on first run and stores it in `.env`. Every request to
+`/v1/*` must present it:
+
+```
+Authorization: Bearer fc-…
+```
+
+This is what stops any other process on the machine from spending your provider
+credentials, and it means revoking access to every app at once is one click —
+no provider account is touched. Rotating takes effect immediately.
 
 ## API keys
 
@@ -121,18 +162,19 @@ effect without a restart.
 ## Using it
 
 Any OpenAI client works. Base URL `http://127.0.0.1:4853/v1`, model `auto`, and
-any non-empty string as the API key — FreeChain holds the real credentials, so
-the calling app never needs one and no key ends up in a browser or a config UI.
+the access key from the dashboard — FreeChain holds the real provider
+credentials, so no provider key ever ends up in an app's config or a browser.
 
 ```bash
 curl http://127.0.0.1:4853/v1/chat/completions \
+  -H 'Authorization: Bearer YOUR_ACCESS_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"auto","messages":[{"role":"user","content":"hello"}]}'
 ```
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:4853/v1", api_key="freechain")
+client = OpenAI(base_url="http://127.0.0.1:4853/v1", api_key="YOUR_ACCESS_KEY")
 print(client.chat.completions.create(
     model="auto", messages=[{"role": "user", "content": "hello"}]
 ).choices[0].message.content)
@@ -154,9 +196,10 @@ that slot. Neither is ever the key itself.
 
 | Route | Purpose |
 |---|---|
-| `POST /v1/chat/completions` | Chat, streaming and non-streaming |
+| `POST /v1/chat/completions` | Chat, streaming and non-streaming. Requires the access key |
 | `GET /v1/models` | `auto` plus every distinct model in the chain |
 | `GET /healthz` | Per-link slot and key counts, and which candidates are cooling off |
+| `GET /` | Dashboard (unless `--no-ui`) |
 
 Naming a specific model instead of `auto` pins the chain to links serving that
 model — so key rotation still works, but it will never silently answer with a
@@ -199,11 +242,16 @@ everything is rate-limited, a stale one still beats no answer.
 The process holds every provider credential, so:
 
 - It binds `127.0.0.1` unless `--host` says otherwise, and warns when it does.
-- `.env` is gitignored. Keys are read from the environment at request time and
-  never logged — `--status`, `/healthz` and the response headers report slot
-  names and counts, never key material.
-- Anything that can reach the port can spend the keys. Do not expose it to a
-  network you do not control.
+- `/v1/*` requires the access key, compared in constant time.
+- `.env` is gitignored and written `0600` where the OS supports it. Keys are
+  read from the environment at request time and never logged — `--status`,
+  `/healthz`, `/admin/state` and the response headers report slot names and
+  counts, never key material.
+- The dashboard and its admin API have **no auth of their own** — they are
+  reachable by anything that can reach the port, and they can write `.env`.
+  That is the same trust boundary as a file on your disk while the server is on
+  loopback, but it is why `--host 0.0.0.0` is a bad idea. Use `--no-ui` to turn
+  the whole admin surface off.
 
 ## Tests
 
