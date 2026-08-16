@@ -99,6 +99,13 @@ export function resolveKey(providerId) {
   return resolveKeys(providerId)[0] ?? null;
 }
 
+/**
+ * Persist the chain's current link order (and any note/free flag) back to
+ * `chain.config.json`. Rewrites only the `chain` array — top-level settings
+ * (`requestTimeoutMs`, `cooldownMs`, etc.) already in the file are read back
+ * in and left untouched. Called after `/admin/chain/reorder` so a restart
+ * keeps the order the dashboard set, not the file's original order.
+ */
 export function saveChainConfig(chain, file = DEFAULT_CHAIN) {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   raw.chain = chain.links.map((l) => {
@@ -110,6 +117,13 @@ export function saveChainConfig(chain, file = DEFAULT_CHAIN) {
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
 }
 
+/**
+ * Load and validate `chain.config.json` into the in-memory shape the rest of
+ * the app works with: each link resolved against its provider definition
+ * (label, base URL, headers, key-optional flag) with sane defaults for the
+ * global settings. Throws if the file is missing, has no `chain` entries, or
+ * a link is missing `model` or names an unknown provider.
+ */
 export function loadChain(file = DEFAULT_CHAIN) {
   if (!fs.existsSync(file)) throw new Error(`Chain config not found: ${file}`);
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));

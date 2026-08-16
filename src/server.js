@@ -35,6 +35,11 @@ const MIME = {
   '.svg': 'image/svg+xml',
 };
 
+/**
+ * Write one JSON response and end it. `cors: true` adds the wildcard CORS
+ * header used by the OpenAI-compatible routes; admin routes never pass it, so
+ * their responses stay unreadable from another origin.
+ */
 const json = (res, code, obj, { cors = false } = {}) => {
   const body = JSON.stringify(obj);
   const headers = {
@@ -50,6 +55,11 @@ const json = (res, code, obj, { cors = false } = {}) => {
 const fail = (res, code, message, extra = {}, { cors = false } = {}) =>
   json(res, code, { error: { message, type: 'freechain_error', ...extra } }, { cors });
 
+/**
+ * Buffer a request body and parse it as JSON. Rejects with `statusCode` set
+ * (413 over the size cap, 400 on invalid JSON) so callers can pass the error
+ * straight to `fail()` without translating it themselves.
+ */
 function readJson(req, limitBytes = 8 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -77,6 +87,13 @@ function readJson(req, limitBytes = 8 * 1024 * 1024) {
 
 const WEBUI_DIR_PREFIX = WEBUI_DIR + path.sep;
 
+/**
+ * Serve one file from `webui/` if `pathname` resolves inside it, `/` mapping
+ * to `index.html`. Returns false (never writes a response) for anything
+ * outside the directory or that doesn't exist, so the caller can fall through
+ * to its own 404 — the `file.startsWith(WEBUI_DIR_PREFIX)` check is what stops
+ * a `..`-laden path from walking out to arbitrary files on disk.
+ */
 function serveStatic(res, pathname) {
   const rel = pathname === '/' || pathname === '' ? 'index.html' : pathname.replace(/^\/+/, '');
   const file = path.join(WEBUI_DIR, rel);
@@ -143,6 +160,16 @@ async function probeLink(link, timeoutMs, signal) {
   return result;
 }
 
+/**
+ * Build the HTTP server: the OpenAI-compatible proxy routes (`/v1/*`,
+ * access-key gated), the admin API the dashboard talks to (`/admin/*`, no
+ * auth of its own — see README's Security section), plain health checks
+ * (`/healthz`, `/v1/health/deep`), and static file serving for `webui/`.
+ * `chain` is mutated in place by admin actions (key edits, reordering) so it
+ * always reflects what's on disk without a restart. `ui: false` (`--no-ui`)
+ * removes the dashboard and the entire `/admin/*` surface, leaving only the
+ * proxy routes.
+ */
 export function createServer(chain, { verbose = false, ui = true } = {}) {
   const cooldowns = new Cooldowns(chain.settings.cooldownMs);
   const stats = { served: 0, failed: 0, startedAt: Date.now() };

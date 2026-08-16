@@ -14,12 +14,16 @@ let accessKeyValue = null;
 
 // ── helpers ───────────────────────────────────────────────────────────
 
+// HTML-escape for anything interpolated into an innerHTML template below —
+// provider labels, model ids, and the like all pass through server data that
+// this file must not trust blindly.
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
   );
 
 let toastTimer;
+/** Show a transient status message. A second call while one is showing replaces it and resets the timer. */
 function toast(message, isError = false) {
   const el = $('#toast');
   el.textContent = message;
@@ -29,6 +33,7 @@ function toast(message, isError = false) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
+/** Fetch a JSON admin endpoint and throw the server's own error message on a non-2xx response. */
 async function api(path, options) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -39,6 +44,7 @@ async function api(path, options) {
   return body;
 }
 
+/** Copy to the clipboard and toast the result — clipboard access can be blocked by the browser. */
 async function copy(text, what = 'Copied') {
   try {
     await navigator.clipboard.writeText(text);
@@ -60,6 +66,7 @@ const icon = {
 
 // ── navigation ────────────────────────────────────────────────────────
 
+/** Switch the visible page and highlight the matching nav item. Pure client-side — no navigation, no reload. */
 function goto(page) {
   $$('.page').forEach((p) => p.classList.toggle('active', p.id === `page-${page}`));
   $$('.nav-item[data-page]').forEach((b) => b.classList.toggle('active', b.dataset.page === page));
@@ -76,6 +83,7 @@ document.addEventListener('click', (e) => {
 
 // ── overview ──────────────────────────────────────────────────────────
 
+/** Paint the Overview page's stat tiles, source cards, and cooling table from the current `state`. */
 function renderOverview() {
   const { totals, stats, providers, cooling } = state;
   $('#statEndpoint').textContent = `${ORIGIN}/v1`;
@@ -115,6 +123,7 @@ function renderOverview() {
 
 // ── providers ─────────────────────────────────────────────────────────
 
+/** Paint the Model sources page: one card per provider family, one row per account slot. */
 function renderProviders() {
   $('#providerList').innerHTML = state.providers
     .map((p) => {
@@ -192,6 +201,7 @@ async function addKey(slotId) {
   toast('Key added');
 }
 
+/** Remove one key from a slot by re-saving the rest as "keep" markers, same round-trip as addKey. */
 async function deleteKey(slotId, index) {
   const provider = state.providers.find((p) => p.slots.some((s) => s.id === slotId));
   const slot = provider.slots.find((s) => s.id === slotId);
@@ -202,6 +212,7 @@ async function deleteKey(slotId, index) {
   toast('Key removed');
 }
 
+/** Send a live 1-token probe through one slot and report latency or the failure reason on the button itself. */
 async function testSlot(slotId, button) {
   const original = button.innerHTML;
   button.disabled = true;
@@ -238,6 +249,7 @@ $('#providerList').addEventListener('keydown', (e) => {
 
 let dragIdx = null;
 
+/** Paint the Chain page's table: one draggable row per link, in the server's current order. */
 function renderChain() {
   $('#chainBody').innerHTML = state.chain
     .map(
@@ -261,6 +273,7 @@ function renderChain() {
     .join('');
 }
 
+/** Send a full reordering (array of old indices in new order) to the server and refresh, reverting on failure. */
 async function applyOrder(order) {
   try {
     await api('/admin/chain/reorder', {
@@ -275,6 +288,7 @@ async function applyOrder(order) {
   }
 }
 
+/** Move one link from index `from` to index `to`, used by both the move buttons and drag-and-drop. */
 function swapChain(from, to) {
   const order = state.chain.map((_, i) => i);
   const [moved] = order.splice(from, 1);
@@ -324,6 +338,7 @@ $('#chainBody').addEventListener('drop', (e) => {
 
 const MASK = '••••••••••••••••••••••••';
 
+/** Fetch the real access key once and cache it in memory; never persisted beyond the page's lifetime. */
 async function ensureKeyLoaded() {
   if (accessKeyValue) return accessKeyValue;
   const { key } = await api('/admin/access-key');
@@ -331,6 +346,7 @@ async function ensureKeyLoaded() {
   return key;
 }
 
+/** Sync the access-key field, eye icon, and connection snippet to the current `revealed` flag. */
 function applyReveal() {
   const field = $('#accessKey');
   field.value = revealed ? accessKeyValue : MASK;
@@ -381,6 +397,7 @@ $$('#snippetTabs .tab').forEach((tab) =>
   })
 );
 
+/** Render the connect-an-app code sample for whichever tab is active, substituting the real key only when revealed. */
 function renderSnippet() {
   // The literal key is only substituted once revealed, so a screenshot of the
   // default view never leaks it.
@@ -447,6 +464,7 @@ ${c('Chain page pins it to links serving that model.')}`,
 // Windows exe/zip release only. Checked once at boot, not on every 10s
 // refresh — the answer only changes because of an action taken right here.
 
+/** Show the Start Menu banner only when eligible, not already created, and not yet answered. */
 async function loadShortcutPrompt() {
   let status;
   try {
@@ -487,6 +505,7 @@ $('#btnShortcutDismiss').addEventListener('click', async (e) => {
 
 // ── boot ──────────────────────────────────────────────────────────────
 
+/** Re-fetch server state and repaint every page from it. The single source of truth for the whole dashboard. */
 async function refresh() {
   state = await api('/admin/state');
   renderOverview();

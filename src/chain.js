@@ -11,6 +11,12 @@
 
 import { resolveAccounts } from './config.js';
 
+/**
+ * Thrown when `dispatch()` gives up: every candidate was tried (or the first
+ * one hit a fatal, non-retryable status) and none answered. `attempts` is the
+ * full per-candidate trail so the server can report it without re-deriving
+ * it, and `server.js` maps this straight to an HTTP 502.
+ */
 export class ChainError extends Error {
   constructor(message, attempts) {
     super(message);
@@ -27,14 +33,17 @@ export class Cooldowns {
     this.until = new Map();
     this.lastError = new Map();
   }
+  /** Skip this candidate for `retryAfterMs` (or the default cooldown), remembering why. */
   penalise(id, reason, retryAfterMs) {
     this.until.set(id, Date.now() + (retryAfterMs ?? this.cooldownMs));
     this.lastError.set(id, reason);
   }
+  /** Make a candidate immediately eligible again, e.g. after it answers successfully. */
   clear(id) {
     this.until.delete(id);
     this.lastError.delete(id);
   }
+  /** Whether this candidate is currently being skipped. Expired entries clean themselves up. */
   isCooling(id) {
     const t = this.until.get(id);
     if (t === undefined) return false;
@@ -44,6 +53,7 @@ export class Cooldowns {
     }
     return true;
   }
+  /** Every candidate currently cooling, for the dashboard's "Cooling off" table. */
   snapshot() {
     const now = Date.now();
     return [...this.until.entries()].map(([id, t]) => ({
@@ -69,6 +79,7 @@ const isOmniRoutePoolFailure = (link, status, detail) =>
   status === 400 &&
   /"diagnostics"\s*:\s*\{/.test(detail);
 
+/** Parse a `Retry-After` header (seconds or an HTTP date) into a millisecond delay, capped at 5 minutes. */
 function retryAfterMs(res) {
   const raw = res.headers.get('retry-after');
   if (!raw) return undefined;

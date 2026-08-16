@@ -58,6 +58,7 @@ export function ensureAccessKey() {
   return key;
 }
 
+/** Replace the access key unconditionally. Every app using the old one is locked out immediately. */
 export function rotateAccessKey() {
   const key = `fc-${crypto.randomBytes(24).toString('base64url')}`;
   setEnvVars(ENV_FILE, { [ACCESS_KEY_VAR]: key });
@@ -78,6 +79,7 @@ export function accessKeyMatches(presented) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+/** Extract the caller's credential from `Authorization`, with or without the `Bearer ` scheme. */
 export function bearerFrom(req) {
   const h = req.headers.authorization || '';
   return h.startsWith('Bearer ') ? h.slice(7).trim() : h.trim() || null;
@@ -162,6 +164,11 @@ export function saveSlotKeys(slotId, keys) {
   return clean.length;
 }
 
+/**
+ * Rearrange the chain's links to match `order` (a permutation of every valid
+ * index) and persist it. Rejects a wrong length, an out-of-range index, or a
+ * repeated one rather than silently dropping or duplicating a link.
+ */
 export function reorderChain(chain, order) {
   if (!Array.isArray(order) || order.length !== chain.links.length) {
     throw new Error(`order must be an array of ${chain.links.length} indices`);

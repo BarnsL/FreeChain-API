@@ -7,7 +7,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+/** Whether a raw line is a `NAME=value` assignment, as opposed to a comment or blank line. */
 const isAssignment = (line) => /^\s*[A-Za-z_][A-Za-z0-9_]*\s*=/.test(line);
+/** The variable name from an assignment line. Only valid when `isAssignment(line)` is true. */
 const nameOf = (line) => line.slice(0, line.indexOf('=')).trim();
 
 // Values are written bare unless they contain something a reader could
