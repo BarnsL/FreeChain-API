@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { rcedit } from 'rcedit';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -70,6 +71,14 @@ console.log(`· building ${EXE}`);
 const exePath = path.join(DIST, EXE);
 fs.copyFileSync(process.execPath, exePath);
 if (!WIN) fs.chmodSync(exePath, 0o755);
+
+// Node's own exe carries the stock Node.js icon. Stamp FreeChain's icon on
+// before postject injects the SEA blob, so the icon edit lands on a plain
+// PE resource section rather than one that's already been modified.
+if (WIN) {
+  console.log('· embedding application icon');
+  await rcedit(exePath, { icon: path.join(ROOT, 'assets', 'icon.ico') });
+}
 
 // macOS refuses to run a binary whose existing signature no longer matches
 // the modified contents, so the old signature is stripped before injecting
