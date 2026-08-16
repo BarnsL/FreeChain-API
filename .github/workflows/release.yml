@@ -43,10 +43,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
+          # Zips plus the bare executable. The unzipped staging folders under
+          # dist/portable/ are inputs to the zips, not artifacts themselves.
           path: |
             dist/*.zip
             dist/freechain-*-*
-            !dist/freechain-*-*/**
           if-no-files-found: error
 
   publish:
@@ -63,7 +64,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          find artifacts -type f \( -name '*.zip' -o -name 'freechain-*' \) -print
-          gh release upload "${GITHUB_REF_NAME}" \
-            $(find artifacts -type f \( -name '*.zip' -o -name 'freechain-*' \) -print) \
+          # Flatten into one directory. Every runner builds the same
+          # source-only zip, so identical names collapse to a single copy.
+          mkdir -p out
+          find artifacts -type f \( -name '*.zip' -o -name 'freechain-*' \) \
+            -exec cp -f {} out/ \;
+          ls -l out
+          gh release upload "${GITHUB_REF_NAME}" out/* \
             --clobber --repo "${GITHUB_REPOSITORY}"

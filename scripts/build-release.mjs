@@ -91,8 +91,12 @@ if (process.platform === 'darwin') run('codesign', ['--sign', '-', exePath]);
 
 // The portable folder is the exe plus the files it reads from disk at runtime:
 // the dashboard assets and the default chain. .env is created on first run.
+//
+// Staged under dist/portable/ because off Windows the executable has no
+// extension, so a folder named after the same target would collide with it.
 console.log('· assembling portable folder');
-const portable = path.join(DIST, `freechain-${TARGET}`);
+const STAGE = path.join(DIST, 'portable');
+const portable = path.join(STAGE, `freechain-${TARGET}`);
 fs.mkdirSync(portable, { recursive: true });
 fs.copyFileSync(exePath, path.join(portable, `freechain${WIN ? '.exe' : ''}`));
 if (!WIN) fs.chmodSync(path.join(portable, 'freechain'), 0o755);
@@ -102,7 +106,7 @@ fs.copyFileSync(path.join(ROOT, '.env.example'), path.join(portable, '.env.examp
 fs.copyFileSync(path.join(ROOT, 'README.md'), path.join(portable, 'README.md'));
 fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(portable, 'LICENSE'));
 fs.writeFileSync(
-  path.join(portable, WIN ? 'START-HERE.txt' : 'START-HERE.txt'),
+  path.join(portable, 'START-HERE.txt'),
   [
     'FreeChain — portable',
     '',
@@ -132,7 +136,7 @@ zipDir(portable, path.join(DIST, `freechain-${TARGET}.zip`));
 // Source-only portable: runs anywhere Node 20+ is already installed, and is a
 // few hundred kilobytes instead of ~90 MB. Built once, on any platform.
 console.log('· assembling source portable (needs Node 20+)');
-const nodePortable = path.join(DIST, 'freechain-portable-node');
+const nodePortable = path.join(STAGE, 'freechain-portable-node');
 fs.mkdirSync(nodePortable, { recursive: true });
 for (const entry of ['src', 'bin']) {
   fs.cpSync(path.join(ROOT, entry), path.join(nodePortable, entry), { recursive: true });
