@@ -10,6 +10,10 @@
   "cooldownMs": 60000,
   "chain": [
     {
+      "provider": "opencode-zen",
+      "model": "nemotron-3-ultra-free"
+    },
+    {
       "provider": "omniroute",
       "model": "auto/coding:free",
       "note": "self-hosted router, tried first when running"
@@ -17,10 +21,6 @@
     {
       "provider": "nvidia",
       "model": "nvidia/nemotron-3-ultra-550b-a55b"
-    },
-    {
-      "provider": "opencode-zen",
-      "model": "nemotron-3-ultra-free"
     },
     {
       "provider": "groq",

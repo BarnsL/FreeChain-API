@@ -372,7 +372,7 @@ $('#btnRotate').addEventListener('click', async () => {
 
 // ── snippets ──────────────────────────────────────────────────────────
 
-let activeSnippet = 'curl';
+let activeSnippet = 'ui';
 $$('#snippetTabs .tab').forEach((tab) =>
   tab.addEventListener('click', () => {
     activeSnippet = tab.dataset.snip;
