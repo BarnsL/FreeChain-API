@@ -185,3 +185,30 @@ test('static serving cannot be walked out of the UI directory', async () => {
   assert.notEqual(res.status, 200);
   app.close();
 });
+
+// ── Start Menu shortcut ───────────────────────────────────────────────
+// This test process is never the packaged SEA binary, so ELIGIBLE is always
+// false here regardless of OS — these tests exercise the "not offered"
+// shape, not the actual PowerShell shortcut creation (covered manually on a
+// built .exe; see docs/DEPLOYMENT.md).
+
+test('the shortcut prompt is not offered outside the packaged Windows exe', async () => {
+  const { app, base } = await boot();
+  const status = await (await fetch(`${base}/admin/shortcut`)).json();
+  assert.deepEqual(status, { eligible: false, exists: false, state: null });
+  app.close();
+});
+
+test('creating or dismissing the shortcut is refused when not eligible', async () => {
+  const { app, base } = await boot();
+
+  const create = await fetch(`${base}/admin/shortcut/create`, { method: 'POST' });
+  assert.equal(create.status, 400);
+  assert.match((await create.json()).error.message, /Windows executable/);
+
+  const dismiss = await fetch(`${base}/admin/shortcut/dismiss`, { method: 'POST' });
+  assert.equal(dismiss.status, 400);
+  assert.match((await dismiss.json()).error.message, /Windows executable/);
+
+  app.close();
+});

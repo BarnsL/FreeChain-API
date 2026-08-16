@@ -262,6 +262,10 @@ pre .c { color: #5b626d; }
 .callout svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
 .callout.warn { background: rgba(224, 163, 62, 0.1); border-color: rgba(224, 163, 62, 0.25); color: #e8cb98; }
 
+.shortcut-prompt { margin-bottom: 18px; align-items: center; }
+.shortcut-prompt-body { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; width: 100%; }
+.shortcut-prompt-actions { display: flex; gap: 8px; flex: none; }
+
 /* ── Toast ──────────────────────────────────────────────────────────── */
 
 #toast {

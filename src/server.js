@@ -18,6 +18,7 @@ import {
   accessKeyMatches,
   bearerFrom,
 } from './admin.js';
+import { shortcutStatus, createShortcut, dismissShortcut } from './shortcut.js';
 
 // A packaged binary ships its webui/ folder next to the executable, not
 // next to this source file.
@@ -248,6 +249,17 @@ export function createServer(chain, { verbose = false, ui = true } = {}) {
           if (!Array.isArray(order)) return fail(res, 400, 'order[] is required');
           reorderChain(chain, order);
           return json(res, 200, { ok: true, count: chain.links.length });
+        }
+        // Windows exe/zip releases only: offers a Start Menu shortcut once,
+        // and only after the browser asks — nothing is created unprompted.
+        if (url.pathname === '/admin/shortcut' && req.method === 'GET') {
+          return json(res, 200, shortcutStatus());
+        }
+        if (url.pathname === '/admin/shortcut/create' && req.method === 'POST') {
+          return json(res, 200, createShortcut());
+        }
+        if (url.pathname === '/admin/shortcut/dismiss' && req.method === 'POST') {
+          return json(res, 200, dismissShortcut());
         }
       } catch (err) {
         const code = err.statusCode || 500;

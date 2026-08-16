@@ -74,6 +74,17 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 - **Description**: The admin API (`/admin/*`) has no authentication. It is safe on loopback
   but becomes a risk if someone binds to `0.0.0.0`. The access key could gate admin routes
   too, or a separate admin password could be introduced.
+  Sharper than "becomes a risk on `0.0.0.0`": it is already reachable on the loopback default
+  through a browser the user has open to any other site. `readJson()` in `src/server.js` parses
+  the body as JSON regardless of `Content-Type`, so a cross-origin page can hit any `/admin/*`
+  POST (`keys`, `chain/reorder`, `access-key/rotate`, `shortcut/create`) blind, via an
+  auto-submitted `enctype="text/plain"` form crafted to serialize as valid JSON — no preflight,
+  no cookies needed, since there is no auth to bypass. Worst case is `/admin/keys`: an attacker
+  can plant their own provider key into a slot, after which real chat traffic dispatched through
+  that slot is sent to the attacker's provider account. A cheap, scoped mitigation without a full
+  auth system: reject `/admin/*` state-changing requests whose `Sec-Fetch-Site` header (sent by
+  all modern browsers, not spoofable from page content) is present and not `same-origin`,
+  falling back to allow when the header is absent (so curl/scripts keep working).
 - **Acceptance**: When bound to a non-loopback address, admin routes require the access key
   or a separate admin credential. Loopback remains open for local convenience.
 

@@ -83,6 +83,22 @@
   <main class="main">
     <div class="container">
 
+      <!-- Windows exe/zip only — asks before touching the Start Menu. Sits
+           outside the page sections so it stays visible no matter which
+           page is open. -->
+      <div id="shortcutPrompt" class="callout shortcut-prompt hidden">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/></svg>
+        <div class="shortcut-prompt-body">
+          <div><strong>Add FreeChain to the Start Menu?</strong> Creates one shortcut pointing at this
+            executable, so you can launch it without finding this folder again. Nothing is created
+            until you choose.</div>
+          <div class="shortcut-prompt-actions">
+            <button class="btn btn-sm btn-primary" id="btnShortcutCreate">Create shortcut</button>
+            <button class="btn btn-sm btn-ghost" id="btnShortcutDismiss">Not now</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Overview ─────────────────────────────────────────────── -->
       <section class="page active" id="page-overview">
         <h1>Overview</h1>

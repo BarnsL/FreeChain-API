@@ -443,6 +443,48 @@ ${c('Chain page pins it to links serving that model.')}`,
   $('#snippet').innerHTML = snippets[activeSnippet];
 }
 
+// ── Start Menu shortcut ───────────────────────────────────────────────
+// Windows exe/zip release only. Checked once at boot, not on every 10s
+// refresh — the answer only changes because of an action taken right here.
+
+async function loadShortcutPrompt() {
+  let status;
+  try {
+    status = await api('/admin/shortcut');
+  } catch {
+    return; // older server, or the route is unreachable — just stay hidden
+  }
+  const show = status.eligible && !status.exists && !status.state;
+  $('#shortcutPrompt').classList.toggle('hidden', !show);
+}
+
+$('#btnShortcutCreate').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    await api('/admin/shortcut/create', { method: 'POST' });
+    $('#shortcutPrompt').classList.add('hidden');
+    toast('Shortcut added to the Start Menu');
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#btnShortcutDismiss').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    await api('/admin/shortcut/dismiss', { method: 'POST' });
+    $('#shortcutPrompt').classList.add('hidden');
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ── boot ──────────────────────────────────────────────────────────────
 
 async function refresh() {
@@ -460,5 +502,6 @@ refresh().catch((err) => {
   $('#serverStatus').textContent = 'unreachable';
   toast(err.message, true);
 });
+loadShortcutPrompt();
 
 setInterval(() => refresh().catch(() => {}), 10_000);
