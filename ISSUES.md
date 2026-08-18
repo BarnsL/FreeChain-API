@@ -24,16 +24,6 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 
 ## Open Issues
 
-### FC-001: Add request logging to disk
-- **Status**: OPEN
-- **Priority**: P2
-- **Type**: Feature
-- **Description**: The server logs to stdout only. For debugging production issues, it would
-  help to have an opt-in file logger that records attempt outcomes (provider, model, status,
-  latency) without ever logging request/response bodies or credentials.
-- **Acceptance**: `--log <file>` flag writes structured JSON lines. Bodies and keys are never
-  included. The file rotates or caps at a configurable size.
-
 ### FC-002: Per-provider timeout overrides
 - **Status**: OPEN
 - **Priority**: P3
@@ -142,6 +132,44 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 
 ## Closed Issues
 
+### FC-001: Add request logging to disk
+- **Status**: DONE
+- **Priority**: P2
+- **Type**: Feature
+- **Description**: The server logged attempts to stdout only, leaving no durable evidence for
+  authentication, routing, token usage, failover, cooling, or app/session correlation.
+- **Resolution**: Added a privacy-safe request journal with 500 in-memory records, JSONL
+  persistence, 5 MiB rotation plus one predecessor, malformed-line recovery, `--log <path>`,
+  `--no-log`, authenticated filtered `/v1/logs`, request IDs, optional sanitized app/session
+  metadata, exact/estimated usage labels, metadata-only admin audits, and a complete Logs dashboard.
+  Prompt/response content, tool bodies, credentials, arbitrary headers, raw IP addresses, and raw
+  provider diagnostics are excluded by the journal schema.
+- **Verification**: Core, server, CLI, source-contract, persistence, auth-before-parse, streaming,
+  filter, no-recursion, and sentinel-absence tests cover the implemented boundary.
+
+### FC-017: Nous Man used a stale FreeChain access key after rotation
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Integration
+- **Description**: Nous Man requests were rejected at FreeChain's local access-key boundary before
+  JSON parsing or provider dispatch. The saved client credential no longer matched FreeChain's
+  current credential. No provider attempt, cooling change, or upstream token usage occurred.
+- **Incident notice**:
+
+  ```text
+  🛠 Nous Man operational notice [status/lifecycle] — 2026-08-17 17:47:24 UTC
+  ❌ Non-retryable error (HTTP 401): HTTP 401: Invalid API key. Use the access key from the FreeChain dashboard.
+
+  (as would have posted: ⚠️ Provider authentication failed. Check the configured credentials; raw provider details are in the gateway logs.)
+  surface: thread:<redacted-thread-id> session: <redacted-session-id>
+  ```
+- **Root cause**: Stale Nous Man client credential after a FreeChain access-key rotation. Masked
+  equivalence and paired control requests proved the mismatch without revealing either value.
+- **Resolution**: Documented the full RCA in
+  `docs/RCA-NOUS-MAN-FREECHAIN-401-2026-08-17.md` and added durable request/app/session correlation.
+  The exact rotation action could not be timestamped because pre-incident FreeChain had no
+  persistent request or admin journal.
+
 ### FC-011: Corrupted "keep" sentinel silently destroyed provider keys
 - **Status**: DONE
 - **Priority**: P0
@@ -160,6 +188,78 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
   Added `test/source-integrity.test.js`: a byte-level scan for stray control
   characters across `src/`, `bin/`, `scripts/`, plus a source-text check that the
   keep-sentinel literals in `app.js` round-trip through `admin.js`'s `KEEP` regex.
+
+### FC-012: Expose FreeChain provider identity to Nexus AI
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Integration
+- **Description**: GitNexus could send requests through FreeChain, but Nexus AI did not receive or
+  display a sanitized provider identity. Users could not tell which provider, model, repository, or
+  request phase was active.
+- **Resolution**: GitNexus now derives a credential-free FreeChain identity, adds it to the current
+  codebase context and system prompt, and shows provider, model, repository, and request-state badges.
+  Provider settings remain scoped to the active browser profile.
+- **Verification**: Provider sanitization, prompt, agent lifecycle, and panel status tests pass. A
+  post-build browser run showed the FreeChain provider, model, repository, and request lifecycle.
+  Successful guide and edit flows moved the served-request counter from 45 to 53.
+
+### FC-013: Distinguish external FreeChain service from a traced managed run
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Integration
+- **Description**: FreeChain intentionally exits zero when another process already owns port 4853.
+  GitNexus showed the optimistic start response as `running`, even though the existing external
+  process had no runtime probes and the event dock correctly stayed at zero.
+- **Resolution**: GitNexus classifies a clean `already running` exit as
+  `existing-external-app`, polls active cards to their terminal state, removes the managed Stop
+  control, and explains that the external process can serve requests but is not traced.
+- **Verification**: Manager and card tests cover the successful external case, unrelated clean exits,
+  nonzero false positives, final polling, and polling shutdown. GitNexus never stops the external
+  process. The live card reported the external untraced owner, while its short instrumented startup
+  attempt still emitted 35 Node events before exit.
+
+### FC-014: Add FreeChain-specific indexed-app trigger guidance
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Integration
+- **Description**: Generic runtime instructions told users to run terminal commands but did not explain
+  which FreeChain dashboard or API action would trigger a path, what should change in the UI, or how
+  to confirm it.
+- **Resolution**: GitNexus now combines current index processes, application surfaces, runtime
+  discovery, managed actions, and observations into a strict seven-section guide. It includes
+  prerequisites, exact app actions, expected code/UI path, confirmation, troubleshooting, citations,
+  and confidence.
+- **Verification**: Guidance context, prompt protocol, schema, app card, safe loopback opening, and
+  graph-focus tests pass. The live card named the dashboard action, expected
+  `createServer -> dispatch -> candidatesFor` path, visible answer, observability locations,
+  confidence, source citation, and remaining runtime evidence gap.
+
+### FC-015: Record live GitNexus-to-FreeChain proof and ownership recovery
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Docs
+- **Description**: Provider traffic, app process ownership, and runtime events were previously treated
+  as one signal. That made a healthy external FreeChain instance look like failed tracing.
+- **Resolution**: `DEPLOYMENT.md` now separates provider, index-guidance, and managed-trace paths. It
+  records ports 4747, 5173, and 4853; browser-profile provider scope; the exact external-process
+  interpretation; controlled restart steps; and rollback references.
+- **Verification**: The original RCA confirmed a pre-existing port-4853 process, a successful
+  FreeChain-backed Nexus request, and zero events from the uninstrumented process. Final branch proof
+  adds visible badges, app guidance, truthful external-process classification, 35 managed startup
+  events, and byte-identical repository edit undo.
+
+### FC-016: Prevent incomplete provider tool calls from looking permanently active
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Integration
+- **Description**: A weaker FreeChain model route emitted a GitNexus tool call but ended its response
+  without the matching tool result. GitNexus marked the request completed and left the tool card on
+  `running`, recreating the appearance that nothing was happening.
+- **Resolution**: GitNexus now turns unresolved tool calls into visible error cards at end-of-stream,
+  marks the request Failed, and recommends retrying with a tool-capable model. The final message is
+  persisted synchronously so the terminal state cannot be cancelled with a pending animation frame.
+- **Verification**: The regression test covers an orphan tool call. Live FreeChain model
+  `auto/coding:free` reproduced the condition and displayed the new Failed/error recovery state.
 
 ---
 
