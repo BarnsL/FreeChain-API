@@ -110,6 +110,8 @@ export function saveChainConfig(chain, file = DEFAULT_CHAIN) {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   raw.chain = chain.links.map((l) => {
     const entry = { provider: l.provider, model: l.model };
+    const defaultBaseUrl = providerDef(l.provider).baseUrl?.replace(/\/+$/, '');
+    if (l.baseUrl && l.baseUrl !== defaultBaseUrl) entry.baseUrl = l.baseUrl;
     if (!l.free) entry.free = false;
     if (l.note) entry.note = l.note;
     return entry;

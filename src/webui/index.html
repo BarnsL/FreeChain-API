@@ -26,19 +26,28 @@
       </button>
       <button class="nav-item" data-page="access">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M19 4l2 2"/></svg>
-        Access key
+        Local keys
       </button>
       <button class="nav-item" data-page="providers">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg>
-        Model sources
+        Providers
       </button>
       <button class="nav-item" data-page="chain">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.8 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.8-1.7"/></svg>
         Chain
       </button>
+      <button class="nav-item" data-page="harness">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        Harness
+      </button>
       <button class="nav-item" data-page="logs">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h14M5 9h14M5 14h9M5 19h6"/><circle cx="18" cy="17" r="3"/><path d="m20.2 19.2 1.8 1.8"/></svg>
         Logs
+      </button>
+
+      <button class="nav-item" data-page="chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H7l-3 3V5Z"/><path d="M8 9h8M8 12h5"/></svg>
+        Chat
       </button>
 
       <div class="nav-label">Model sources</div>
@@ -123,11 +132,11 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
           <div>
             <strong>No model source keys yet.</strong> Every request will fail until at least one
-            provider has a credential. Add one under <a href="#" data-goto="providers">Model sources</a>.
+            provider has a credential. Add one under <a href="#" data-goto="providers">Providers</a>.
           </div>
         </div>
 
-        <div class="section-head"><h2>Model sources</h2><p>Where the chain draws from. Add keys under Model sources.</p></div>
+        <div class="section-head"><h2>Providers</h2><p>Where the chain draws from. Add keys under Providers.</p></div>
         <div class="stat-grid" id="sourceCards"></div>
 
         <div class="section-head"><h2>Cooling off</h2><p>Candidates temporarily skipped after a rate limit or error.</p></div>
@@ -152,9 +161,9 @@
         </aside>
       </section>
 
-      <!-- ── Access key ───────────────────────────────────────────── -->
+      <!-- ── Local API keys ───────────────────────────────────────────── -->
       <section class="page" id="page-access">
-        <h1>Access key</h1>
+        <h1>Local API keys</h1>
         <p class="lede">
           One fixed key for every app that talks to FreeChain. Give this to your tools instead of a
           provider key — the real credentials never leave this machine, and revoking here cuts off
@@ -202,9 +211,9 @@
         </div>
       </section>
 
-      <!-- ── Model sources ────────────────────────────────────────── -->
+      <!-- ── Providers ────────────────────────────────────────── -->
       <section class="page" id="page-providers">
-        <h1>Model sources</h1>
+        <h1>Providers</h1>
         <p class="lede">
           Each source has numbered account slots. Rate limits are per account, so adding a second
           slot means a 429 retries on the next account before the chain downgrades to a weaker
@@ -229,6 +238,18 @@
         </div>
       </section>
 
+      <!-- ── Harness ──────────────────────────────────────────────── -->
+      <section class="page" id="page-harness">
+        <h1>Harness</h1>
+        <p class="lede">
+          Build the Harness by mixing identity, operating, safety, tool, reasoning, output,
+          behavior, persona, generation, and infrastructure components. It applies to every
+          request the access key serves.
+        </p>
+        <div id="harnessConfig"></div>
+        <div id="presetLibrary" class="preset-library card" aria-live="polite"></div>
+      </section>
+
       <!-- ── Logs ─────────────────────────────────────────────────── -->
       <section class="page" id="page-logs">
         <div class="log-title-row">
@@ -240,7 +261,9 @@
             </p>
           </div>
           <div class="log-title-actions">
-            <button class="btn btn-ghost" id="btnLogsPause" type="button" aria-pressed="false">Pause live</button>
+            <!-- Same weight as Refresh: both act on the live feed, and a ghost
+                 button here read as a label rather than a control. -->
+            <button class="btn" id="btnLogsPause" type="button" aria-pressed="false">Pause live</button>
             <button class="btn" id="btnLogsRefresh" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
               Refresh
@@ -248,15 +271,13 @@
           </div>
         </div>
 
-        <div class="callout log-privacy">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-          <div>
-            <strong>Metadata only.</strong> Prompts, responses, tool bodies, and credentials are never stored.
-            Exact usage is labelled separately from four-character estimates. Apps can identify themselves
-            with <span class="mono">X-FreeChain-App</span> and <span class="mono">X-FreeChain-Session-Id</span>;
-            both values are client-reported.
-            <div class="log-storage" id="logStorage">Checking journal storage… Use <span class="mono">--no-log</span> for memory only.</div>
-          </div>
+        <!-- Empty in the shipped, metadata-only posture. It is filled in from
+             the live log policy only when some form of caller content is
+             actually being retained, so the page stays quiet when there is
+             nothing to warn about. -->
+        <div class="callout warn log-privacy hidden" id="logRetentionCallout" role="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          <div><span id="logRetentionNotice"></span></div>
         </div>
 
         <div class="stat-grid log-summary" id="logSummary" aria-label="Log summary">
@@ -306,11 +327,151 @@
         </div>
       </section>
 
+      <section class="page" id="page-chat">
+        <div class="log-title-row">
+          <div>
+            <h1>Chat</h1>
+            <p class="lede">
+              A local operator that reads sanitized state, diagnoses routing and credential
+              problems, and proposes changes. Nothing it suggests takes effect until you confirm it
+              here.
+            </p>
+          </div>
+          <div class="log-title-actions">
+            <button class="btn" id="btnOpRefresh" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <!-- Status only. The confirmation model is enforced by the server and
+             stated at the point of confirming, so restating it here on every
+             visit was noise rather than a safeguard. -->
+        <div class="op-status" id="opStatus" role="status"></div>
+
+        <div class="tabs" id="opTabs" role="tablist">
+          <button class="tab active" data-op-tab="chat" type="button">Chat</button>
+          <button class="tab" data-op-tab="doctor" type="button">Doctor</button>
+          <button class="tab" data-op-tab="security" type="button">Security</button>
+          <button class="tab" data-op-tab="providers" type="button">Providers</button>
+          <button class="tab" data-op-tab="settings" type="button">Settings</button>
+        </div>
+
+        <div class="op-panel active" id="op-tab-chat">
+          <div class="card op-chat">
+            <div class="op-messages" id="opMessages" aria-live="polite">
+              <div class="op-bubble assistant">I can inspect sanitized state, diagnose problems, guide provider setup, and propose changes for you to confirm.</div>
+            </div>
+            <div id="opPending"></div>
+            <div class="op-links" id="opLinks"></div>
+            <div class="op-quick">
+              <button class="btn btn-ghost btn-sm" type="button" data-op-prompt="Run a doctor check and explain what needs attention.">Doctor check</button>
+              <button class="btn btn-ghost btn-sm" type="button" data-op-prompt="Analyze recent logs for security and reliability problems.">Analyze logs</button>
+              <button class="btn btn-ghost btn-sm" type="button" data-op-prompt="Help me configure missing providers using detected credentials or official login pages.">Provider setup</button>
+              <button class="btn btn-ghost btn-sm" type="button" data-op-prompt="Review the routing chain and recommend improvements.">Review chain</button>
+            </div>
+            <div class="op-compose">
+              <textarea class="input" id="opInput" rows="2" placeholder="Ask about routing, credentials, failures, or setup…"></textarea>
+              <button class="btn btn-primary" id="opSend" type="button">Send</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="op-panel" id="op-tab-doctor">
+          <div class="stat-grid" id="opDoctor" aria-label="Doctor checks">
+            <div class="stat log-skeleton"><div class="skeleton-line short"></div><div class="skeleton-line value"></div></div>
+            <div class="stat log-skeleton"><div class="skeleton-line short"></div><div class="skeleton-line value"></div></div>
+            <div class="stat log-skeleton"><div class="skeleton-line short"></div><div class="skeleton-line value"></div></div>
+          </div>
+        </div>
+
+        <div class="op-panel" id="op-tab-security">
+          <div class="callout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Z"/></svg>
+            <div>Deterministic checks over the retained journal metadata. For the records themselves, use <strong>Logs</strong>.</div>
+          </div>
+          <div id="opSecurity"></div>
+        </div>
+
+        <div class="op-panel" id="op-tab-providers">
+          <div id="opProviders" class="stack"></div>
+        </div>
+
+        <div class="op-panel" id="op-tab-settings">
+          <div class="card">
+            <div class="section-head"><h2>Operator model</h2><p>Which model answers on this page.</p></div>
+            <p class="lede">
+              By default the operator routes through FreeChain's own access key, so it needs no extra
+              credential and obeys the same chain, failover and cooldown rules as any other client.
+            </p>
+            <label class="op-check"><input type="checkbox" id="opUseSelf" /> <span>Use this router itself</span></label>
+            <div class="op-fields">
+              <label><span>Base URL</span><input class="input" id="opBaseUrl" placeholder="https://api.example.com/v1" autocomplete="off" /></label>
+              <label><span>Model</span><input class="input" id="opModel" placeholder="model id" autocomplete="off" /></label>
+              <label><span>Control-model API key</span><input class="input" id="opKey" type="password" placeholder="stored in .env, never shown to the model" autocomplete="off" /></label>
+            </div>
+            <div class="op-actions">
+              <button class="btn btn-primary" id="opSaveModel" type="button">Save model settings</button>
+              <button class="btn" id="opSaveKey" type="button">Save key</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-head"><h2>Appearance</h2><p>Presentation only.</p></div>
+            <p class="lede">
+              These preferences never affect routing or security behaviour. They apply to this page
+              and to the rest of the dashboard.
+            </p>
+            <div class="op-fields">
+              <label><span>Theme</span><select class="input" id="opTheme"><option value="dark">dark</option><option value="light">light</option><option value="system">system</option></select></label>
+              <label><span>Font</span><select class="input" id="opFont"><option value="system">system</option><option value="sans">sans</option><option value="serif">serif</option><option value="mono">mono</option></select></label>
+              <label><span>Font scale</span><input class="input" id="opScale" type="number" min="0.8" max="1.4" step="0.05" /></label>
+              <label><span>Density</span><select class="input" id="opDensity"><option value="compact">compact</option><option value="comfortable">comfortable</option><option value="spacious">spacious</option></select></label>
+            </div>
+            <div class="op-actions"><button class="btn btn-primary" id="opSaveUi" type="button">Save appearance</button></div>
+          </div>
+
+          <div class="card">
+            <div class="section-head"><h2>Log policy</h2><p>What the journal is allowed to keep.</p></div>
+            <p class="lede">
+              By default FreeChain writes metadata only: which app called, which provider
+              answered, how long it took. Everything below turns some part of the actual traffic
+              into a stored record on this machine. Each one is off until you turn it on, and the
+              Logs page always states the policy currently in force.
+            </p>
+
+            <label class="op-check"><input type="checkbox" id="opPromptSummary" /> <span>Bounded, redacted prompt summaries <em>— newest few messages, URLs, paths, emails and keys stripped</em></span></label>
+            <label class="op-check"><input type="checkbox" id="opRawPrompts" /> <span>Raw prompts <em>— the request messages verbatim, unredacted, after Harness composition</em></span></label>
+            <label class="op-check"><input type="checkbox" id="opRawResponses" /> <span>Raw responses <em>— the model output verbatim, streaming included</em></span></label>
+            <label class="op-check"><input type="checkbox" id="opRawToolBodies" /> <span>Raw tool bodies <em>— tool definitions and tool_choice verbatim</em></span></label>
+
+            <div class="callout warn op-danger">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+              <div>
+                <label class="op-check"><input type="checkbox" id="opCredentials" /> <span><strong>Store presented credentials in clear text</strong></span></label>
+                The access key each caller sends is written to
+                <span class="mono">logs/requests.jsonl</span> as plain text. Useful for one thing
+                only — seeing what an app actually sent when its key is being rejected. Anyone who
+                can read that file gets a working access key. Turn it on to catch the bug, then turn
+                it off, rotate the access key, and clear the journal.
+              </div>
+            </div>
+
+            <div class="op-fields">
+              <label><span>Raw capture ceiling (characters)</span><input class="input" id="opMaxRawChars" type="number" min="1000" max="64000" step="1000" /></label>
+            </div>
+            <div class="op-actions"><button class="btn btn-primary" id="opSaveLogs" type="button">Save log policy</button></div>
+          </div>
+        </div>
+      </section>
+
     </div>
   </main>
 </div>
 
 <div id="toast"></div>
 <script src="/app.js"></script>
+<script src="/operator.js"></script>
 </body>
 </html>

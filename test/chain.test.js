@@ -1,6 +1,7 @@
 // Failover behaviour is the whole product, so it is tested against a real
 // local upstream rather than a mocked fetch.
 
+import './private-data-dir.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';

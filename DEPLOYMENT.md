@@ -311,6 +311,113 @@ status cards or cooling guidance:
    the semantic hooks, grid declaration, legend groups, and the existence of this handoff section;
    browser verification remains necessary for final layout confirmation.
 
+### Opt-in retention
+
+The journal stores metadata by default: who called, which provider answered,
+how long it took, how many tokens. None of the traffic itself is written. A
+host debugging their own router can change that on **Chat → Settings → Log
+policy**, one switch at a time:
+
+| Switch | What it writes |
+|---|---|
+| `promptSummary` | The newest few messages, truncated, with URLs, paths, emails and key-shaped strings stripped |
+| `rawPrompts` | `messages` verbatim, unredacted |
+| `rawResponses` | Model output verbatim, streaming included |
+| `rawToolBodies` | `tools` and `tool_choice` verbatim |
+| `credentials` | The bearer token each caller presented, in clear text |
+
+Four properties hold regardless of how the switches are set:
+
+1. **Fail closed.** Every switch requires an explicit `true`. A missing policy,
+   an empty policy, or a truthy-but-not-`true` value all capture nothing —
+   `summarizeInput(body)` with no policy is metadata-only.
+2. **The cap is not negotiable.** Policy decides whether a field is captured,
+   never how large it may grow. `RAW_HARD_CAP` (64k characters) is applied on
+   persist whatever `maxRawChars` asked for, and truncation is marked in the
+   stored value rather than done silently, so the journal's 5 MiB rotation
+   budget cannot be consumed by one enormous request.
+3. **The model cannot turn these on.** `set_log_policy` is an allowlisted
+   operator action, but `stripHumanOnlyLogFlags()` removes the four content
+   switches from anything the model proposes. Enabling them requires a human on
+   the Settings tab. The system prompt says the same thing; this is the part
+   that enforces it.
+4. **The Logs page states the policy in force.** Its privacy callout is
+   rewritten from the live settings by `renderRetentionNotice()`. With any raw
+   switch on it turns amber and says so, because a screen that claimed
+   "never stored" while capture was running would be lying at exactly the
+   moment it mattered.
+
+#### On `credentials`
+
+This one is different in kind, and worth being blunt about. It writes working
+bearer tokens to `logs/requests.jsonl` in clear text. Anyone who can read that
+file — a backup, a screen share, a stray `git add -f` — has working keys, and
+recovering means rotating every provider key in the chain.
+
+It answers exactly one question well: *what did this app actually send?*, when
+a key is being rejected and the caller's config is not visible. `keyIndex` on
+each attempt already tells you which stored key was used, so for anything else
+you almost certainly do not need this. Turn it on, reproduce the failure, turn
+it off, then clear the journal from the operator.
+
+### Chat page
+
+The operator surface is a page inside the dashboard (`#page-chat`, nav key
+`chat`, directly after Logs), not a separate document. It previously shipped as
+a standalone `/operator.html` with its own stylesheet; that drifted visually
+from the dashboard immediately, so the page, its markup and its styles now live
+in `index.html`, `app.css` and `operator.js` alongside everything else.
+
+`src/webui/operator.js` is kept deliberately in step with SubChain's file of the
+same name — the two dashboards present the same surface, so a fix to one belongs
+in the other. Every id on the page is namespaced `op*` to stay clear of the
+dashboard's own ids, and the whole page is loaded lazily on first visit so it
+costs nothing until opened.
+
+Guarantees the page must keep:
+
+- all `/admin/operator/*` routes are loopback-only and reject cross-site
+  mutations;
+- the model receives sanitized status only — never provider keys, prompts, or
+  responses;
+- a model proposal is inert. It becomes a pending action from a fixed allowlist,
+  and only an explicit confirm request reaches the executor;
+- prompt-summary retention is opt-in, exposed on the Settings tab.
+
+### Text containment
+
+Shared rule with the other two chain dashboards: no string may overflow its card, and the page
+itself never scrolls sideways. `src/webui/app.css` ends with a zero-specificity `:where()` block
+that gives every card-like container `min-width: 0` and `overflow-wrap: anywhere`, and pushes
+anything genuinely unwrappable (`<pre>`, tables) into its own horizontal scroll box.
+
+It is structural rather than per-component on purpose. Provider ids, model names, base URLs, request
+ids, key chips and raw upstream error text are all lengths this project does not control, so fixing
+one card only moves the bug to the next card someone adds. Writing the block with `:where()` keeps
+its specificity at zero, so deliberate widths set elsewhere still win.
+
+Change it in FreeChain, SubChain and VisionChain together, and verify at 1280px and at 380px.
+
+### Grids size on the container, not the viewport
+
+A card grid must be `repeat(auto-fit, minmax(<real minimum>, 1fr))`, never a fixed column count
+with a media query as its escape hatch.
+
+The failure this prevents is not hypothetical. The Logs summary was `repeat(4, minmax(0, 1fr))`
+relaxed to two columns below an 880px viewport. At a 960px window the 248px sidebar is still
+present, so the content column is only ~620px: above the breakpoint, but four tiles wide. Each
+tile got 105px of usable width for a 95px label, and the filter row — a fixed five columns —
+clipped its placeholders to "chain or provide". The viewport was never the constraint; the
+container was, and a viewport media query cannot see it.
+
+`minmax(0, ...)` is the specific trap. It permits a track to shrink to nothing, which is right for
+a scroll container and wrong for anything holding text. Give every text-bearing track a minimum it
+can actually be read at.
+
+Verify by narrowing the window with the sidebar visible, not by narrowing past the breakpoint —
+the bug lives between those two states.
+
+
 ### Cooling error classifications
 
 `src/chain.js` treats HTTP 400 and 422 as fatal caller-request failures, so it stops the chain and

@@ -2,6 +2,7 @@
 // tests here care about two things above all: the .env file survives editing
 // intact, and provider keys never leave the server in readable form.
 
+import './private-data-dir.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

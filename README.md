@@ -127,9 +127,16 @@ Open `http://127.0.0.1:4853/` for a web console covering everything below:
   with a one-request **Test** button per slot and a direct link to that
   provider's key page.
 - **Chain** — the ordered chain and each link's credential configuration state.
+- **Harness** — identity, operating, safety, tool, reasoning, output, behavior
+  and persona components, plus generation and infrastructure defaults, model
+  aliases and custom request metadata. One Harness in the library is active and
+  composes every request the access key serves. Same component vocabulary and
+  file format as SubChain — see [docs/HARNESS.md](docs/HARNESS.md).
 - **Logs** — newest-first request and admin lifecycle metadata, filters, token
   summaries, latency, provider attempts, error classifications, and cooling.
-  Prompts, responses, tool bodies, and credentials are never stored.
+  Metadata only unless you deliberately turn on retention under **Chat →
+  Settings → Log policy**; when you do, the Logs page says so in a warning it
+  only shows while something is actually being retained.
 
 The dashboard writes to `.env` on this machine. Provider keys are returned to
 the page **masked only** (`sk-or••••••1234`) — the browser can prove a key
