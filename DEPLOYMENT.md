@@ -31,11 +31,12 @@ freechain/
 │   ├── providers.js           Provider catalog. Defines all known providers and their numbered account slots.
 │   ├── admin.js               Admin logic. Key masking, access key management, slot key CRUD, live testing.
 │   ├── envfile.js             .env reader/writer. Round-trip safe editing of credential files.
+│   ├── request-journal.js     Sanitized lifecycle schema, JSONL recovery/rotation, filters, usage meters.
 │   ├── runtime.js             Detects a packaged single-executable build so paths resolve next to the exe.
 │   └── webui/
-│       ├── index.html         Dashboard shell. Sidebar nav, four page sections, toast overlay.
-│       ├── app.css             Full stylesheet. Dark theme, shadcn token convention, responsive.
-│       └── app.js             Dashboard behaviour. State fetch, provider/chain/access-key rendering.
+│       ├── index.html         Dashboard shell, including the static cooling-error legend beneath the live table.
+│       ├── app.css            Full stylesheet and the source-card status-anchor layout contract.
+│       └── app.js             Dashboard behaviour; renderOverview paints the state-driven card/table data.
 │
 ├── test/
 │   ├── chain.test.js          Failover logic against real local HTTP upstreams.
@@ -43,7 +44,10 @@ freechain/
 │   ├── admin.test.js          .env round-tripping, key masking, access key gating, path traversal.
 │   ├── cli.test.js            Isolated no-UI startup and access-key gating.
 │   ├── deep-health.test.js    Explicit live-probe auth, rate-limit, redaction, and abort behavior.
-│   └── supervisor.test.js     Worker restart delay, recovery, and shutdown behavior.
+│   ├── request-journal.test.js  Schema sanitization, SSE metering, filtering, persistence, and rotation.
+│   ├── request-logging.test.js  HTTP auth, usage, failover, cooling, API, CORS, and audit integration.
+│   ├── supervisor.test.js     Worker restart delay, recovery, and shutdown behavior.
+│   └── source-integrity.test.js  Browser-source contracts that cannot be imported by node:test directly.
 │
 ├── scripts/
 │   └── build-release.mjs      Release builder. Bundles to CJS, produces the single executable and zips.
@@ -127,6 +131,7 @@ freechain/
 | POST | `/v1/chat/completions` | Access key (Bearer) | Main proxy endpoint. Walks the chain. |
 | POST | `/v1/health/deep` | Access key (Bearer) | Explicit live probe. Sends a 1-token request to every configured chain link, no more than once per minute globally. Results contain no provider bodies or credentials. |
 | GET | `/v1/models` | Access key (Bearer) | Lists "auto" plus every model in the chain. |
+| GET | `/v1/logs` | Access key (Bearer) | Returns the sanitized journal. Supports limit/cursor/status/provider/app/route/search filters, sends `no-store`, and excludes its own reads. |
 | GET | `/healthz`, `/v1/status` | None | Credential configuration, cooling state, uptime stats. Does not contact providers. |
 | GET | `/admin/state` | None (loopback only) | Full inventory for the dashboard. Keys are masked. |
 | GET | `/admin/access-key` | None (loopback only) | Reveals the access key (for copy to clipboard). |
@@ -196,9 +201,9 @@ rotated from the dashboard.
   warns when bound to anything other than 127.0.0.1.
 - **Keys never leave the server.** The admin API returns masked keys. The `inventory()`
   function masks every key before it touches the response. The test suite asserts this.
-- **Access key gating.** Every `/v1/chat/completions` and `/v1/health/deep` request is checked
-  against the access key. Without it, other processes on the machine cannot spend provider
-  credentials or trigger external probes.
+- **Access key gating.** Chat, deep health, model discovery, and journal reads are checked against
+  the access key. Without it, other processes on the machine cannot spend provider credentials,
+  trigger external probes, or inspect operational metadata.
 - **Constant-time comparison.** `crypto.timingSafeEqual` prevents timing attacks on the
   access key.
 - **Path traversal prevention.** Static file serving checks that the resolved path starts
@@ -207,6 +212,9 @@ rotated from the dashboard.
 - **No secrets in chain.config.json.** The config file is safe to commit. It contains
   provider names and model IDs only.
 - **Request body size limit.** 8 MB cap on POST bodies to prevent memory exhaustion.
+- **Fixed journal schema.** The journal retains no prompt/response content, tool bodies,
+  credentials, arbitrary headers, raw IP addresses, or raw provider diagnostics. Files use mode
+  0600 where supported, rotate at 5 MiB, retain one predecessor, and recover past malformed lines.
 
 ## Configuration
 
@@ -214,6 +222,7 @@ rotated from the dashboard.
 
 ```
 freechain [--port 4853] [--host 127.0.0.1] [--chain <file>] [--verbose] [--no-ui]
+          [--log <path>] [--no-log]
 freechain --status     # show which links have credentials, then exit
 ```
 
@@ -221,7 +230,9 @@ freechain --status     # show which links have credentials, then exit
 manual starts: the default command is the supervising parent. A worker crash
 restarts after 1, 2, 4, 8, 16, then a maximum of 30 seconds. If the selected
 endpoint already responds, the parent exits without disturbing that instance.
-The supervisor does not replace a Windows sign-in or reboot launcher.
+The supervisor does not replace a Windows sign-in or reboot launcher. `--log`
+selects the JSONL path. `--no-log` disables disk persistence but preserves the
+newest 500 in-memory records for the API and dashboard.
 
 ### Environment variables
 
@@ -243,17 +254,151 @@ The supervisor does not replace a Windows sign-in or reboot launcher.
 
 ## Web Dashboard
 
-Four pages served at `http://127.0.0.1:4853/`:
+Five pages served at `http://127.0.0.1:4853/`:
 
 1. **Overview**: endpoint URL, configured links/total, candidate count, requests served/failed,
-   per-source status cards, cooling-off table.
+   per-source status cards, cooling-off table, and a static HTTP-error legend immediately below it.
 2. **Access key**: reveal/copy/rotate the local API key. Code snippets (curl, Python, Node,
    env vars, editor settings) with live key substitution.
 3. **Model sources**: per-provider slot grid. Add/remove keys, test connectivity.
 4. **Chain**: ordered table of all chain links with credential status.
+5. **Logs**: filtered request and admin lifecycle metadata, request correlation, client-reported
+   app/session, attempt trails, exact/estimated token summaries, errors, and cooling. It refreshes
+   every 10 seconds only while visible and keeps the last safe snapshot marked stale after errors.
 
 Plain HTML/CSS/JS. No framework, no build step, no CDN. Dark theme, responsive layout.
 State is refetched from `/admin/state` after every mutation and on a 10-second poll.
+
+### Request journal data flow
+
+1. `bin/freechain.mjs` creates one `RequestJournal` per supervised worker. The default path is
+   `logs/requests.jsonl` under the source or packaged runtime root.
+2. `src/server.js` creates a UUID and safe client/network metadata before authentication for every
+   journaled route. A finish/close guard writes exactly one terminal record.
+3. Authentication rejects are recorded before body parsing with
+   `inputSummary: unavailable-before-auth`. Authenticated chat bodies are reduced immediately to
+   model, streaming, role/count, character, tool-count, and max-token metadata.
+4. `dispatch()` remains the routing authority. The server copies only provider/model/key ordinal,
+   outcome, and latency from each attempt. Attempt detail and provider bodies are dropped by the
+   journal allowlist.
+5. JSON replies are summarized after receipt. SSE chunks are counted as they pass through and only
+   a partial line buffer is held. Exact provider usage wins; otherwise input/output characters are
+   converted to a clearly labelled four-character estimate.
+6. `GET /v1/logs` authenticates through the normal access-key matcher, filters the in-memory view,
+   returns `Cache-Control: no-store`, and never creates another record. The dashboard obtains the
+   key through its existing same-origin reveal path and retains it in page memory only.
+7. `src/webui/app.js` paints the summary, filters, compact rows, expandable safe details, and
+   loading/empty/error/stale states. `test/source-integrity.test.js` protects the browser-only
+   navigation and state contract.
+
+## Dashboard data and layout contract
+
+This section is the handoff map for the Overview page. Keep these files in sync when changing its
+status cards or cooling guidance:
+
+1. `src/server.js` serialises `cooldowns.snapshot()` as the `cooling` array in `/admin/state`.
+   Each row contains a candidate identifier, the last stored error, and the remaining cooldown seconds.
+2. `src/webui/app.js` calls `renderOverview()` after every state refresh. It filters providers that
+   occur in the configured chain and renders the dynamic source cards and cooling table from that
+   response. It does not issue a health probe.
+3. `src/webui/app.css` makes `source-card-header` a two-column grid: the label receives the flexible
+   column and the badge occupies the fixed trailing column. Long labels may wrap, but every `ready`
+   or `no key` badge remains pinned to the same card-relative position.
+4. `src/webui/index.html` owns `#coolingErrorLegend`, directly after `#coolingBox`. The legend is
+   static because it explains the failover policy, while the table is dynamic because it shows only
+   the candidates cooling right now.
+5. `test/source-integrity.test.js` is the regression guard for this browser-only contract. It checks
+   the semantic hooks, grid declaration, legend groups, and the existence of this handoff section;
+   browser verification remains necessary for final layout confirmation.
+
+### Cooling error classifications
+
+`src/chain.js` treats HTTP 400 and 422 as fatal caller-request failures, so it stops the chain and
+does not add a cooldown. OmniRoute's documented diagnostic 400 for an exhausted nested pool is the
+only exception. Every other HTTP status, plus timeouts and network errors, belongs to the individual
+candidate: FreeChain records it in the cooling snapshot, temporarily demotes that candidate, and
+continues to the next candidate. HTTP 429 may use a provider `Retry-After` value, capped at five
+minutes; other cooldowns use `chain.config.json`'s `cooldownMs`.
+
+The Overview's `ready` badge is deliberately not a reachability claim. It says only that the
+provider has a configured key or is key-optional. Use the explicit deep-health endpoint or a live
+request when the question is whether an upstream provider currently answers.
+
+## GitNexus integration boundary
+
+GitNexus can use FreeChain as the active OpenAI-compatible Nexus AI provider while the indexed
+repository is also FreeChain itself. These are separate roles:
+
+```text
+GitNexus provider settings
+  -> FreeChain at http://127.0.0.1:4853/v1, model auto
+  -> sanitized provider identity in Nexus AI context
+  -> provider/model/repository/request badges in the GitNexus UI
+
+FreeChain repository index
+  -> application surfaces and execution processes
+  -> FreeChain-specific trigger guide
+  -> graph citations and expected dashboard results
+
+GitNexus managed runtime action
+  -> GitNexus-owned FreeChain process with runtime probes
+  -> function events in the bottom Runtime Activity dock
+```
+
+Provider health does not prove runtime tracing. A FreeChain process that was started outside
+GitNexus can answer Nexus AI requests normally while the Runtime Activity dock remains at zero.
+FreeChain's supervisor exits successfully when it detects an existing listener. GitNexus now reports
+that terminal result as an external, untraced app instead of leaving the start card at `running`.
+
+### Operator sequence
+
+1. Start or verify GitNexus on loopback port 4747 and open its web UI, normally on port 5173 in
+   development.
+2. In GitNexus AI Settings, choose the FreeChain custom provider, OpenAI compatibility, loopback port
+   4853, and a tool-capable model. The verified route uses `openai/gpt-oss-120b`. Use the access key
+   through the existing credential field; never place it in repository documentation or graph context.
+3. Select the FreeChain index. Confirm Nexus AI identifies FreeChain as its provider and FreeChain as
+   the indexed application.
+4. Ask Nexus for a dashboard or API trigger path. The guide should name exact FreeChain controls,
+   explain which indexed process is expected to run, describe the visible dashboard result, and cite
+   repository nodes.
+5. If trace events are required, resolve the current port-4853 PID and executable before stopping
+   anything. Stop only the verified FreeChain parent, then use GitNexus's confirmed managed action.
+6. Exercise the guided FreeChain UI or API path and confirm function events appear in GitNexus's
+   bottom dock. GitNexus must never stop an external FreeChain process it did not start.
+
+### Failure interpretation
+
+| Observation | Meaning | Recovery |
+|---|---|---|
+| Nexus request succeeds, Runtime Activity stays at zero | FreeChain provider transport works, but the process is external or uninstrumented | Keep it external or perform a controlled managed restart |
+| GitNexus reports FreeChain already running outside GitNexus | Port 4853 belongs to a pre-existing process | Verify ownership; do not click Stop because GitNexus does not own it |
+| Provider badge is missing or names another provider | The current browser profile has different AI settings | Open AI Settings in that profile and save the intended FreeChain provider |
+| Tool card reports that the provider ended before the result | The selected model route did not complete GitNexus tool calling | Use a tool-capable route such as the verified `openai/gpt-oss-120b` model |
+| A previously saved browser profile returns 401 after the 2026-08-17 proof | The local access key was rotated after a diagnostic surface exposed the prior token | Copy the current key from the FreeChain dashboard into that browser profile and save it again |
+| Guide has low confidence or missing steps | The current index lacks enough deterministic UI/runtime evidence | Refresh the index and inspect the cited files before acting |
+| FreeChain `ready` badge shows but a request fails | The badge means configured, not live upstream reachability | Use the authenticated deep-health route or a real bounded request |
+
+The corresponding GitNexus deployment map is `docs/RUNTIME-ACTIVITY-DEPLOYMENT.md` in the
+`codex/runtime-gui-controls` worktree. Its rollback anchor is commit `6f304340`, branch
+`codex/runtime-intelligence-milestone-2026-08-16`, and tag
+`milestone/runtime-intelligence-2026-08-16`.
+
+### Live proof, 2026-08-17
+
+An isolated GitNexus build used FreeChain as its visible provider against this indexed repository.
+The provider/model/repository badges were correct, the request lifecycle completed visibly, and the
+FreeChain served counter moved from 45 to 53 across successful guide and edit flows. Nexus rendered
+a structured FreeChain application guide and correctly reported that the existing port-4853 process
+was external and untraced. The instrumented startup attempt emitted 35 Node events before exiting on
+the existing listener, which proved the event transport and bottom-table layout without claiming
+ownership of the external process.
+
+The one-file edit proof changed `ISSUES.md` only after exact-diff review. GitNexus Undo restored the
+pre-apply SHA-256 byte-for-byte and removed the temporary marker. A diagnostic accessibility dump
+exposed the prior loopback access token during setup, so the access key was rotated immediately and
+the isolated browser profile was rebound. Any other browser profile with the old token must be
+refreshed from the local dashboard.
 
 ## Running
 

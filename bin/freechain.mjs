@@ -7,6 +7,7 @@ import { createServer } from '../src/server.js';
 import { ensureAccessKey } from '../src/admin.js';
 import { isPortListening, superviseWorker } from '../src/supervisor.js';
 import { IS_SEA } from '../src/runtime.js';
+import { RequestJournal } from '../src/request-journal.js';
 
 // A packaged binary has no [node, scriptPath, ...args] triple — process.argv
 // is just [exePath, ...args], one entry shorter than a normal invocation.
@@ -22,6 +23,7 @@ if (has('--help') || has('-h')) {
   console.log(`freechain — OpenAI-compatible failover router
 
   freechain [--port 4853] [--host 127.0.0.1] [--chain <file>] [--verbose]
+            [--log <path>] [--no-log]
   freechain --status        show which links have credentials, then exit
 
 Point any OpenAI-compatible client at http://<host>:<port>/v1 and use the
@@ -63,6 +65,8 @@ const port = Number(flag('--port', process.env.FREECHAIN_PORT || 4853));
 // must be opted in to listening on anything wider.
 const host = flag('--host', process.env.FREECHAIN_HOST || '127.0.0.1');
 const ui = !has('--no-ui');
+const logPath = path.resolve(flag('--log', path.join(ROOT, 'logs', 'requests.jsonl')));
+const persistJournal = !has('--no-log');
 
 // Wrapped rather than top-level await: the release build bundles this file to
 // CommonJS for single-executable packaging, which has no top-level await.
@@ -86,12 +90,13 @@ async function startSupervisor() {
             env: process.env,
           })),
     });
-    const stop = (signal) => {
+    const stop = async (signal) => {
       console.log(`[supervisor] received ${signal}; stopping worker`);
-      supervisor.stop();
+      await supervisor.stop();
+      process.exit(0);
     };
-    process.once('SIGINT', () => stop('SIGINT'));
-    process.once('SIGTERM', () => stop('SIGTERM'));
+    process.once('SIGINT', () => void stop('SIGINT'));
+    process.once('SIGTERM', () => void stop('SIGTERM'));
     supervisor.start();
   }
 }
@@ -99,12 +104,14 @@ async function startSupervisor() {
 function startWorker() {
   // Generated on first run even without the dashboard: every proxy route is gated.
   const accessKey = ensureAccessKey();
+  const journal = new RequestJournal({ filePath: logPath, enabled: persistJournal });
 
-  createServer(chain, { verbose: has('--verbose'), ui }).listen(port, host, () => {
+  createServer(chain, { verbose: has('--verbose'), ui, journal }).listen(port, host, () => {
     const withKeys = status.filter((l) => l.keyCount > 0);
     console.log(`freechain    http://${host}:${port}/v1`);
     if (ui) console.log(`dashboard    http://${host}:${port}/`);
     console.log(`chain        ${configured.length}/${status.length} links configured (${chainFile})`);
+    console.log(persistJournal ? `journal      ${logPath}` : 'journal      memory only (--no-log)');
 
     if (!withKeys.length) {
       // Not fatal: the dashboard is how a user is meant to add their first key,

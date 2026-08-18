@@ -11,6 +11,12 @@ const ORIGIN = location.origin;
 let state = null;
 let revealed = false;
 let accessKeyValue = null;
+let logsPage = null;
+let logsLoading = false;
+let logsLastUpdatedAt = 0;
+let logsNextRefreshAt = 0;
+let logsStale = false;
+let logsPaused = false;
 
 // ── helpers ───────────────────────────────────────────────────────────
 
@@ -71,6 +77,7 @@ function goto(page) {
   $$('.page').forEach((p) => p.classList.toggle('active', p.id === `page-${page}`));
   $$('.nav-item[data-page]').forEach((b) => b.classList.toggle('active', b.dataset.page === page));
   window.scrollTo(0, 0);
+  if (page === 'logs' && !logsLoading) refreshLogs();
 }
 $$('.nav-item[data-page]').forEach((b) => b.addEventListener('click', () => goto(b.dataset.page)));
 document.addEventListener('click', (e) => {
@@ -83,7 +90,17 @@ document.addEventListener('click', (e) => {
 
 // ── overview ──────────────────────────────────────────────────────────
 
-/** Paint the Overview page's stat tiles, source cards, and cooling table from the current `state`. */
+/**
+ * Paint the Overview page's stat tiles, source cards, and cooling table from the current `state`.
+ *
+ * Source-card layout contract: every card uses `source-card-header`, a two-column grid whose
+ * second column is reserved for the configuration-status badge. This keeps every badge on the
+ * same right-hand anchor even when a provider label wraps to several lines. `ready` still means
+ * a key is configured (or the provider needs no key), never that a live upstream probe passed.
+ *
+ * The HTTP-error legend is static markup in index.html, below `#coolingBox`: it documents the
+ * failover classifications without duplicating mutable cooldown state in the renderer.
+ */
 function renderOverview() {
   const { totals, stats, providers, cooling } = state;
   $('#statEndpoint').textContent = `${ORIGIN}/v1`;
@@ -100,14 +117,14 @@ function renderOverview() {
     .filter((p) => p.inChain)
     .map((p) => {
       const ok = p.totalKeys > 0 || p.keyOptional;
-      return `<div class="stat">
-        <div class="row-between">
-          <div class="stat-label">${esc(p.label)}</div>
-          <span class="badge ${ok ? 'badge-ok' : ''}"><span class="dot"></span>${ok ? 'ready' : 'no key'}</span>
+      return `<article class="stat source-card">
+        <div class="source-card-header">
+          <div class="stat-label source-card-label">${esc(p.label)}</div>
+          <span class="badge source-card-status ${ok ? 'badge-ok' : ''}"><span class="dot"></span>${ok ? 'ready' : 'no key'}</span>
         </div>
         <div class="stat-value" style="font-size:22px">${p.totalKeys || (p.keyOptional ? '—' : 0)}</div>
         <div class="stat-sub">${p.totalKeys ? `${p.totalKeys} key(s) across ${p.activeSlots} slot(s)` : p.keyOptional ? 'no key required' : 'awaiting a key'} · ${p.modelCount} model(s)</div>
-      </div>`;
+      </article>`;
     })
     .join('');
 
@@ -334,6 +351,216 @@ $('#chainBody').addEventListener('drop', (e) => {
   swapChain(dragIdx, to);
 });
 
+// ── privacy-safe request logs ────────────────────────────────────────
+
+const number = (value) => new Intl.NumberFormat().format(Number(value) || 0);
+const duration = (value) => `${number(value)} ms`;
+
+function logTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return { day: 'Unknown date', time: '—' };
+  return {
+    day: date.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+    time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+  };
+}
+
+function logBadge(outcome) {
+  if (outcome === 'served') return 'badge-ok';
+  if (outcome === 'auth-rejected' || outcome === 'rejected') return 'badge-warn';
+  if (outcome === 'failed' || outcome === 'client-disconnected') return 'badge-err';
+  return '';
+}
+
+function logDetailList(entries) {
+  return `<dl>${entries
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`)
+    .join('')}</dl>`;
+}
+
+function renderLogRecord(record) {
+  const timestamp = logTimestamp(record.startedAt);
+  const usage = record.result?.usage;
+  const provider = record.served?.provider || record.attempts?.at(-1)?.provider || 'not reached';
+  const model = record.served?.model || record.request?.model || '—';
+  const app = record.client?.reportedApp || record.client?.sdk?.language || 'unreported';
+  const roles = Object.entries(record.request?.inputSummary?.roles || {})
+    .map(([role, count]) => `${role} ${count}`)
+    .join(', ') || '—';
+  const attempts = record.attempts?.length
+    ? record.attempts.map((attempt, index) => `<span class="log-attempt"><strong>${index + 1}</strong> ${esc(attempt.provider || 'unknown')} · ${esc(attempt.model || 'unknown')} · ${esc(attempt.outcome || 'unknown')} · ${duration(attempt.ms)}</span>`).join('')
+    : '<span class="log-attempt">No provider attempt</span>';
+  const cooling = record.cooling?.candidates?.length
+    ? record.cooling.candidates.map((candidate) => `${candidate.id} (${candidate.secondsRemaining}s)`).join(', ')
+    : 'None';
+  const error = record.error
+    ? logDetailList([
+        ['Code', record.error.code],
+        ['Category', record.error.category],
+        ['Gateway HTTP', record.error.httpStatus],
+        ['Provider HTTP', record.error.providerStatus],
+        ['Retryable', record.error.retryable === true ? 'yes' : record.error.retryable === false ? 'no' : undefined],
+      ])
+    : '<dl><dt>Error</dt><dd>None</dd></dl>';
+
+  return `<details class="log-record" data-request-id="${esc(record.id)}">
+    <summary class="log-record-summary">
+      <span class="log-cell log-time">${esc(timestamp.time)}<small>${esc(timestamp.day)} · ${esc(record.id)}</small></span>
+      <span class="log-cell log-outcome"><span class="badge ${logBadge(record.outcome)}"><span class="dot"></span>${esc(record.outcome || 'unknown')}</span></span>
+      <span class="log-cell log-app" title="${esc(app)}">${esc(app)}</span>
+      <span class="log-cell log-route"><strong>${esc(record.route || '—')}</strong><small>${esc(record.method || '—')} · ${esc(model)}</small></span>
+      <span class="log-cell log-provider" title="${esc(provider)}">${esc(provider)}<small>${record.attempts?.length || 0} attempt(s)</small></span>
+      <span class="log-cell log-duration">${duration(record.durationMs)}</span>
+      <span class="log-cell log-tokens ${usage?.source || ''}">${usage ? number(usage.totalTokens) : '—'}<small>${esc(usage?.source || '')}</small></span>
+      <span class="log-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span>
+    </summary>
+    <div class="log-detail">
+      <section class="log-detail-group"><h3>Request</h3>${logDetailList([
+        ['Request ID', record.id],
+        ['Route', `${record.method || '—'} ${record.route || '—'}`],
+        ['Model', record.request?.model],
+        ['Streaming', record.request?.stream === true ? 'yes' : record.request?.stream === false ? 'no' : undefined],
+        ['Messages', record.request?.inputSummary?.messageCount],
+        ['Roles', roles],
+        ['Input characters', record.request?.inputSummary?.inputChars],
+        ['Tools', record.request?.inputSummary?.toolCount],
+        ['Requested max tokens', record.request?.inputSummary?.maxTokens],
+        ['Input summary', typeof record.request?.inputSummary === 'string' ? record.request.inputSummary : undefined],
+      ])}</section>
+      <section class="log-detail-group"><h3>Result and usage</h3>${logDetailList([
+        ['HTTP status', record.status],
+        ['Outcome', record.outcome],
+        ['Served by', record.served ? `${record.served.provider} / ${record.served.model} / key ${record.served.keyIndex}` : 'not served'],
+        ['Choices', record.result?.choiceCount],
+        ['Finish reasons', record.result?.finishReasons?.join(', ')],
+        ['Output characters', record.result?.outputChars],
+        ['Output bytes', record.result?.outputBytes],
+        ['Input tokens', usage?.inputTokens],
+        ['Output tokens', usage?.outputTokens],
+        ['Total tokens', usage?.totalTokens],
+        ['Usage source', usage?.source],
+      ])}</section>
+      <section class="log-detail-group"><h3>Client and lifecycle</h3>${logDetailList([
+        ['Reported app', record.client?.reportedApp || 'unreported'],
+        ['Reported session', record.client?.sessionId || 'unreported'],
+        ['Network', record.client?.remoteCategory],
+        ['SDK', record.client?.sdk ? `${record.client.sdk.language || ''} ${record.client.sdk.packageVersion || ''}`.trim() : 'unreported'],
+        ['Runtime', record.client?.sdk ? `${record.client.sdk.runtime || ''} ${record.client.sdk.runtimeVersion || ''}`.trim() : 'unreported'],
+        ['Auth', record.auth?.result],
+        ['Duration', duration(record.durationMs)],
+        ['Cooling after request', cooling],
+        ['Audit action', record.audit?.action],
+      ])}</section>
+      <section class="log-detail-group wide"><h3>Attempt trail</h3><div class="log-attempts">${attempts}</div></section>
+      <section class="log-detail-group wide"><h3>Error classification</h3>${error}</section>
+    </div>
+  </details>`;
+}
+
+function renderLogs(page) {
+  const { summary, items } = page;
+  const rows = $('#logRows');
+  const openRequestIds = new Set($$('details.log-record[open]', rows).map((record) => record.dataset.requestId));
+  const scrollY = window.scrollY;
+  $('#logSummary').innerHTML = `
+    <article class="stat"><div class="stat-label">Matching records</div><div class="stat-value">${number(summary.total)}</div><div class="stat-sub">newest first, up to 500 retained</div></article>
+    <article class="stat"><div class="stat-label">Tokens observed</div><div class="stat-value">${number(summary.totalTokens)}</div><div class="stat-sub">${number(summary.exactRecords)} exact · ${number(summary.estimatedRecords)} estimated</div></article>
+    <article class="stat"><div class="stat-label">Average latency</div><div class="stat-value">${number(summary.averageDurationMs)}<small> ms</small></div><div class="stat-sub">terminal gateway duration</div></article>
+    <article class="stat"><div class="stat-label">Cooling involved</div><div class="stat-value">${number(summary.coolingRecords)}</div><div class="stat-sub">records ending with cooling candidates</div></article>`;
+  rows.setAttribute('aria-busy', 'false');
+  rows.classList.toggle('hidden', items.length === 0);
+  $('#logEmpty').classList.toggle('hidden', items.length !== 0);
+  rows.innerHTML = items.length ? `
+    <div class="log-table-head" role="row"><span>Time / request</span><span>Outcome</span><span>App</span><span>Route / model</span><span>Provider</span><span style="text-align:right">Latency</span><span style="text-align:right">Tokens</span><span></span></div>
+    ${items.map(renderLogRecord).join('')}` : '';
+  $$('details.log-record', rows).forEach((record) => {
+    if (openRequestIds.has(record.dataset.requestId)) record.open = true;
+  });
+  requestAnimationFrame(() => window.scrollTo(0, scrollY));
+}
+
+function updateLogStatus() {
+  if (!$('#page-logs').classList.contains('active') || !logsLastUpdatedAt) return;
+  const seconds = Math.max(0, Math.ceil((logsNextRefreshAt - Date.now()) / 1000));
+  const age = Math.max(0, Math.round((Date.now() - logsLastUpdatedAt) / 1000));
+  if (logsPaused) {
+    $('#logStatus').textContent = `Paused · ${logsPage?.summary?.total || 0} matching · last updated ${age}s ago`;
+    return;
+  }
+  $('#logStatus').textContent = logsStale
+    ? `Stale snapshot · last updated ${age}s ago · retrying in ${seconds}s`
+    : `Live while open · ${logsPage?.summary?.total || 0} matching · next refresh in ${seconds}s`;
+}
+
+async function fetchLogs(params) {
+  let key = await ensureKeyLoaded();
+  let response = await fetch(`/v1/logs?${params}`, { headers: { Authorization: `Bearer ${key}` } });
+  if (response.status === 401) {
+    accessKeyValue = null;
+    key = await ensureKeyLoaded();
+    response = await fetch(`/v1/logs?${params}`, { headers: { Authorization: `Bearer ${key}` } });
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.error?.message || `HTTP ${response.status}`);
+  return body;
+}
+
+async function refreshLogs() {
+  if (logsLoading) return;
+  logsLoading = true;
+  $('#btnLogsRefresh').disabled = true;
+  if (!logsPage) {
+    $('#logRows').classList.remove('hidden');
+    $('#logRows').setAttribute('aria-busy', 'true');
+    $('#logStatus').textContent = 'Loading the local journal…';
+  }
+  const query = new URLSearchParams({ limit: '100' });
+  const fields = new FormData($('#logFilters'));
+  for (const [name, value] of fields) if (String(value).trim()) query.set(name, String(value).trim());
+  try {
+    logsPage = await fetchLogs(query);
+    logsLastUpdatedAt = Date.now();
+    logsNextRefreshAt = Date.now() + 10_000;
+    logsStale = false;
+    $('#logError').classList.add('hidden');
+    renderLogs(logsPage);
+    updateLogStatus();
+  } catch (err) {
+    logsStale = Boolean(logsPage);
+    logsNextRefreshAt = Date.now() + 10_000;
+    $('#logErrorMessage').textContent = logsPage ? err.message : `${err.message} No records are displayed.`;
+    $('#logError').classList.remove('hidden');
+    $('#logStatus').textContent = logsPage ? 'Stale snapshot · automatic retry remains active' : 'Journal unavailable · automatic retry remains active';
+    if (!logsPage) {
+      $('#logRows').classList.add('hidden');
+      $('#logEmpty').classList.remove('hidden');
+    }
+  } finally {
+    logsLoading = false;
+    $('#btnLogsRefresh').disabled = false;
+  }
+}
+
+$('#btnLogsRefresh').addEventListener('click', refreshLogs);
+$('#btnLogsPause').addEventListener('click', () => {
+  logsPaused = !logsPaused;
+  $('#btnLogsPause').setAttribute('aria-pressed', String(logsPaused));
+  $('#btnLogsPause').textContent = logsPaused ? 'Resume live' : 'Pause live';
+  updateLogStatus();
+  if (!logsPaused) refreshLogs();
+});
+$('#btnLogsClear').addEventListener('click', () => {
+  $('#logFilters').reset();
+  refreshLogs();
+});
+let logFilterTimer;
+$('#logFilters').addEventListener('input', () => {
+  clearTimeout(logFilterTimer);
+  logFilterTimer = setTimeout(refreshLogs, 250);
+});
+$('#logFilters').addEventListener('change', refreshLogs);
+
 // ── access key ────────────────────────────────────────────────────────
 
 const MASK = '••••••••••••••••••••••••';
@@ -411,6 +638,8 @@ function renderSnippet() {
     curl: `curl ${esc(base)}/chat/completions \\
   -H ${s(`"Authorization: Bearer ${key}"`)} \\
   -H ${s('"Content-Type: application/json"')} \\
+  -H ${s('"X-FreeChain-App: My App"')} \\
+  -H ${s('"X-FreeChain-Session-Id: optional-session-id"')} \\
   -d ${s(`'{"model":"auto","messages":[{"role":"user","content":"hello"}]}'`)}`,
 
     python: `${k('from')} openai ${k('import')} OpenAI
@@ -418,6 +647,7 @@ function renderSnippet() {
 client = OpenAI(
     base_url=${s(`"${base}"`)},
     api_key=${s(`"${key}"`)},
+    default_headers={${s('"X-FreeChain-App"')}: ${s('"My App"')}},
 )
 
 r = client.chat.completions.create(
@@ -431,6 +661,7 @@ ${k('print')}(r.choices[0].message.content)`,
 ${k('const')} client = ${k('new')} OpenAI({
   baseURL: ${s(`'${base}'`)},
   apiKey: ${s(`'${key}'`)},
+  defaultHeaders: { ${s("'X-FreeChain-App'")}: ${s("'My App'")} },
 });
 
 ${k('const')} r = ${k('await')} client.chat.completions.create({
@@ -512,6 +743,11 @@ async function refresh() {
   renderProviders();
   renderChain();
   renderSnippet();
+  const journal = state.journal || {};
+  const rotation = Number(journal.rotateAtBytes) / (1024 * 1024);
+  $('#logStorage').textContent = journal.persistence === 'persistent'
+    ? `Storage: persistent private JSONL · ${number(journal.maxEntries)} in memory · rotates at ${number(rotation)} MiB + ${number(journal.predecessors)} predecessor. Restart with --no-log for memory only, or --log <path> for another private location.`
+    : `Storage: memory only · ${number(journal.maxEntries)} retained for this process. Restart without --no-log to restore private JSONL persistence.`;
   $('#serverDot').style.color = 'var(--success)';
   $('#serverStatus').textContent = `running · ${state.stats.uptimeSeconds}s`;
 }
@@ -523,4 +759,8 @@ refresh().catch((err) => {
 });
 loadShortcutPrompt();
 
-setInterval(() => refresh().catch(() => {}), 10_000);
+setInterval(() => {
+  refresh().catch(() => {});
+  if ($('#page-logs').classList.contains('active') && !logsPaused) refreshLogs();
+}, 10_000);
+setInterval(updateLogStatus, 1_000);

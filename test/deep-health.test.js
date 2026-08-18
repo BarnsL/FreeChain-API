@@ -130,10 +130,15 @@ test('deep health rejects missing or invalid access keys before probing and acce
 test('deep health stops before later links when the client disconnects', async (t) => {
   let firstStarted;
   const firstSeen = new Promise((resolve) => { firstStarted = resolve; });
+  let firstClosed;
+  const firstGone = new Promise((resolve) => { firstClosed = resolve; });
   let secondCalls = 0;
   const first = await upstream((req, res) => {
     firstStarted();
-    req.on('close', () => res.destroy());
+    // Hold the first response open until the downstream disconnect aborts the
+    // probe. Destroying it on the already-complete request's `close` event
+    // races the downstream client and can start link two before disconnect.
+    res.once('close', firstClosed);
   });
   const second = await upstream((req, res) => {
     secondCalls++;
@@ -141,7 +146,9 @@ test('deep health stops before later links when the client disconnects', async (
     res.end('{}');
   });
   const chain = chainOf({ model: 'first', port: first.port }, { model: 'second', port: second.port });
-  chain.settings.requestTimeoutMs = 50;
+  // Give the downstream socket-close signal time to reach the server before a
+  // provider timeout can legitimately advance the sweep.
+  chain.settings.requestTimeoutMs = 1_000;
   const { app, base } = await boot(chain);
   t.after(() => { app.close(); first.close(); second.close(); });
 
@@ -150,7 +157,8 @@ test('deep health stops before later links when the client disconnects', async (
   client.end('{}');
   await firstSeen;
   client.destroy();
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await firstGone;
+  await new Promise((resolve) => setTimeout(resolve, 20));
 
   assert.equal(secondCalls, 0, 'a disconnected client must stop the remaining sweep');
 });

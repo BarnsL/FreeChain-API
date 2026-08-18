@@ -66,3 +66,76 @@ test('the "keep" sentinel in the dashboard matches the KEEP regex admin.js parse
     assert.match(rendered, KEEP, `"${literal}" does not round-trip through KEEP after trim()`);
   }
 });
+
+test('the overview keeps source statuses aligned and documents cooling errors in place', () => {
+  // The dashboard is intentionally framework-free and app.js touches `document`
+  // at module scope, so this is a source-contract test. Browser verification
+  // complements it by proving the static contract paints correctly at runtime.
+  const appJs = fs.readFileSync(path.join(ROOT, 'src', 'webui', 'app.js'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'src', 'webui', 'app.css'), 'utf8');
+  const overviewHtml = fs.readFileSync(path.join(ROOT, 'src', 'webui', 'index.html'), 'utf8');
+  const deploymentMap = fs.readFileSync(path.join(ROOT, 'DEPLOYMENT.md'), 'utf8');
+
+  assert.match(appJs, /class="stat source-card"/, 'overview source cards need their dedicated layout hook');
+  assert.match(appJs, /class="source-card-header"/, 'every source label and status needs the same grid header');
+  assert.match(
+    css,
+    /\.source-card-header\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto;[^}]*\}/s,
+    'the source-status column must stay pinned to the shared right edge',
+  );
+  assert.match(overviewHtml, /id="coolingErrorLegend"/, 'the error legend belongs beneath the cooling table');
+  for (const errorGroup of ['400', '401 / 403', '404', '408 / network', '429', '5xx']) {
+    assert.match(overviewHtml, new RegExp(errorGroup.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `missing ${errorGroup} cooling explanation`);
+  }
+  assert.match(deploymentMap, /## Dashboard data and layout contract/, 'the deployment map must describe this dashboard contract');
+});
+
+test('the Logs workspace is directly below Chain and exposes the complete privacy-safe workflow', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'src', 'webui', 'index.html'), 'utf8');
+  const appJs = fs.readFileSync(path.join(ROOT, 'src', 'webui', 'app.js'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'src', 'webui', 'app.css'), 'utf8');
+  const server = fs.readFileSync(path.join(ROOT, 'src', 'server.js'), 'utf8');
+  const gitignore = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
+
+  assert.match(
+    html,
+    /data-page="chain"[\s\S]*?>[\s\S]*?Chain[\s\S]*?<\/button>\s*<button class="nav-item" data-page="logs"/,
+    'Logs must be the next primary navigation item after Chain',
+  );
+  for (const id of [
+    'page-logs',
+    'logSummary',
+    'logFilters',
+    'logStatus',
+    'logRows',
+    'logEmpty',
+    'logError',
+    'btnLogsRefresh',
+    'btnLogsPause',
+    'btnLogsClear',
+    'logStorage',
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`), `missing Logs UI anchor #${id}`);
+  }
+  assert.match(html, /Prompts, responses, tool bodies, and credentials are never stored/i);
+  assert.match(html, /Exact usage is labelled separately from four-character estimates/i);
+  assert.match(html, /--no-log/);
+  assert.match(appJs, /async function refreshLogs/);
+  assert.match(appJs, /journal\.persistence/);
+  assert.doesNotMatch(appJs, /log-record-summary" aria-label=/);
+  assert.match(appJs, /setInterval[\s\S]*10_000/);
+  assert.match(appJs, /X-FreeChain-App/);
+  assert.match(appJs, /X-FreeChain-Session-Id/);
+  assert.match(appJs, /logsPaused/);
+  assert.match(appJs, /data-request-id/);
+  assert.match(css, /\.log-filters/);
+  assert.match(css, /\.log-record/);
+  assert.match(css, /\.log-detail/);
+  assert.match(css, /nav-provider-link/);
+  assert.match(css, /max-width:\s*880px[\s\S]*nav-provider-link[\s\S]*display:\s*none/);
+  assert.match(css, /max-width:\s*880px[\s\S]*\.nav-item\s*\{[^}]*width:\s*auto/);
+  assert.match(server, /X-FreeChain-App/);
+  assert.match(server, /X-FreeChain-Session-Id/);
+  assert.match(server, /X-FreeChain-Request-Id/);
+  assert.match(gitignore, /^logs\/requests\.jsonl\*$/m, 'private journal files must not enter git');
+});

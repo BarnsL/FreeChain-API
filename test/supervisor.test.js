@@ -56,3 +56,24 @@ test('superviseWorker restarts an unexpected exit and cancels a pending restart 
   scheduled[1].callback();
   assert.equal(workers.length, 2);
 });
+
+test('supervisor stop resolves only after the active worker exits', async () => {
+  const worker = new EventEmitter();
+  worker.kill = (signal) => {
+    worker.signal = signal;
+  };
+  const supervisor = superviseWorker({ spawnWorker: () => worker });
+  supervisor.start();
+
+  let settled = false;
+  const stopping = supervisor.stop().then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  assert.equal(worker.signal, 'SIGTERM');
+  assert.equal(settled, false);
+
+  worker.emit('exit', null, 'SIGTERM');
+  await stopping;
+  assert.equal(settled, true);
+});

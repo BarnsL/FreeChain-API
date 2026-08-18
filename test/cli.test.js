@@ -6,6 +6,17 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+test('help documents persistent journal controls', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/freechain.mjs', import.meta.url)), '--help'], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /--log <path>/);
+  assert.match(result.stdout, /--no-log/);
+});
 
 async function freePort() {
   const server = http.createServer();
@@ -74,4 +85,10 @@ test('no-ui startup creates an access key that gates deep health', async (t) => 
   assert.equal((await fetch(`${base}/v1/health/deep`, {
     method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: '{}',
   })).status, 200);
+
+  const journalFile = path.join(root, 'logs', 'requests.jsonl');
+  assert.equal(fs.existsSync(journalFile), true, 'default startup must persist the journal below the runtime root');
+  const journalText = fs.readFileSync(journalFile, 'utf8');
+  assert.match(journalText, /"outcome":"auth-rejected"/);
+  assert.doesNotMatch(journalText, new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });

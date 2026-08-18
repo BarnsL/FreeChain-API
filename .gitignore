@@ -6,6 +6,9 @@
 node_modules/
 *.log
 
+# Private operational journal, including its rotated predecessor.
+logs/requests.jsonl*
+
 # Release artifacts — built by scripts/build-release.mjs, published to GitHub
 # Releases rather than committed.
 dist/

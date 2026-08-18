@@ -55,7 +55,12 @@ export function superviseWorker({
         cancel(restartTimer);
         restartTimer = null;
       }
-      if (worker) worker.kill('SIGTERM');
+      if (!worker) return Promise.resolve();
+      const activeWorker = worker;
+      return new Promise((resolve) => {
+        activeWorker.once('exit', resolve);
+        activeWorker.kill('SIGTERM');
+      });
     },
   };
 }

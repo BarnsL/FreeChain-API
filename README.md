@@ -81,9 +81,12 @@ node bin/freechain.mjs
 freechain    http://127.0.0.1:4853/v1
 dashboard    http://127.0.0.1:4853/
 chain        17/18 links configured
+journal      <runtime>/logs/requests.jsonl
 ```
 
-Flags: `--port`, `--host`, `--chain <file>`, `--verbose`, `--no-ui`.
+Flags: `--port`, `--host`, `--chain <file>`, `--verbose`, `--no-ui`,
+`--log <path>`, and `--no-log`. The last flag disables disk persistence but
+keeps the bounded in-memory Logs view and API.
 
 You don't need a key to start — open the dashboard and add one there.
 
@@ -124,6 +127,9 @@ Open `http://127.0.0.1:4853/` for a web console covering everything below:
   with a one-request **Test** button per slot and a direct link to that
   provider's key page.
 - **Chain** — the ordered chain and each link's credential configuration state.
+- **Logs** — newest-first request and admin lifecycle metadata, filters, token
+  summaries, latency, provider attempts, error classifications, and cooling.
+  Prompts, responses, tool bodies, and credentials are never stored.
 
 The dashboard writes to `.env` on this machine. Provider keys are returned to
 the page **masked only** (`sk-or••••••1234`) — the browser can prove a key
@@ -222,6 +228,8 @@ credentials, so no provider key ever ends up in an app's config or a browser.
 curl http://127.0.0.1:4853/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_ACCESS_KEY' \
   -H 'Content-Type: application/json' \
+  -H 'X-FreeChain-App: My App' \
+  -H 'X-FreeChain-Session-Id: optional-session-id' \
   -d '{"model":"auto","messages":[{"role":"user","content":"hello"}]}'
 ```
 
@@ -240,6 +248,7 @@ X-Freechain-Provider:  openrouter1
 X-Freechain-Model:     openai/gpt-oss-20b:free
 X-Freechain-Key-Index: 0
 X-Freechain-Attempts:  4
+X-FreeChain-Request-Id: <request UUID>
 ```
 
 `Provider` is the account slot that answered; `Key-Index` is its ordinal within
@@ -252,12 +261,38 @@ that slot. Neither is ever the key itself.
 | `POST /v1/chat/completions` | Chat, streaming and non-streaming. Requires the access key |
 | `POST /v1/health/deep` | Explicit, rate-limited 1-token probe of every configured chain link. Requires the access key |
 | `GET /v1/models` | `auto` plus every distinct model in the chain. Requires the access key |
+| `GET /v1/logs` | Sanitized request journal with `limit`, `before`, `status`, `provider`, `app`, `route`, and `q` filters. Requires the access key and returns `Cache-Control: no-store` |
 | `GET /healthz` | Per-link slot and key counts, and which candidates are cooling off |
 | `GET /` | Dashboard (unless `--no-ui`) |
 
 Naming a specific model instead of `auto` pins the chain to links serving that
 model — so key rotation still works, but it will never silently answer with a
 different model than the one asked for.
+
+### Request journal
+
+FreeChain keeps the newest 500 sanitized records in memory. By default it also
+writes JSON Lines to `logs/requests.jsonl` below the runtime root, rotates at
+5 MiB, and retains one predecessor at `requests.jsonl.1`. A malformed or torn
+line is ignored during restart recovery without hiding later valid records.
+Use `--log <path>` to choose another file or `--no-log` for memory only.
+
+Each terminal record can include its request UUID, timestamps and duration,
+route, remote network category, client-reported app/session, recognized SDK
+metadata, authentication result, requested model, stream flag, message roles
+and counts, character counts, tool count, max-token setting, provider attempts,
+serving provider/model/key ordinal, response size, finish reasons, token usage,
+error classification, and post-request cooling. When a provider reports token
+usage it is marked `exact`; otherwise FreeChain records an explicit estimate of
+one token per four input/output characters. Pre-authentication failures use
+`inputSummary: unavailable-before-auth` because the body is never parsed.
+
+The schema never accepts prompt or response content, tool definitions or
+arguments, credentials, authorization or arbitrary headers, raw IP addresses,
+or raw provider diagnostic bodies. `X-FreeChain-App` and
+`X-FreeChain-Session-Id` are optional, sanitized, length-capped, and
+client-reported. Do not put secrets in either value. Reads of `/v1/logs` are
+excluded from the journal so polling cannot create recursive records.
 
 ## The chain
 
@@ -305,12 +340,17 @@ everything is rate-limited, a stale one still beats no answer.
 The process holds every provider credential, so:
 
 - It binds `127.0.0.1` unless `--host` says otherwise, and warns when it does.
-- `/v1/chat/completions` and `/v1/health/deep` require the access key, compared in constant time.
+- `/v1/chat/completions`, `/v1/health/deep`, `/v1/models`, and `/v1/logs` require the access key, compared in constant time.
 - The access key is generated on the first server start, including with `--no-ui`, so every proxy route remains gated.
 - `.env` is gitignored and written `0600` where the OS supports it. Keys are
   read from the environment at request time and never logged — `--status`,
   `/healthz`, `/admin/state` and the response headers report slot names and
   counts, never key material.
+- Journal files are created with owner-only mode where the OS supports it and
+  contain only the fixed sanitized schema above. The API sends `no-store` and
+  the dashboard keeps the access key in page memory only. Anyone with local
+  account access or the FreeChain access key can still read operational
+  metadata, so rotate it before sharing a machine or browser profile.
 - The dashboard and its admin API have **no auth of their own** — they are
   reachable by anything that can reach the port, and they can write `.env`.
   That is the same trust boundary as a file on your disk while the server is on

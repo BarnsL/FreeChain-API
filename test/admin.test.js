@@ -10,6 +10,7 @@ import path from 'node:path';
 import { setEnvVars, reloadEnv, envNames } from '../src/envfile.js';
 import { maskKey, accessKeyMatches, bearerFrom, ACCESS_KEY_VAR } from '../src/admin.js';
 import { createServer } from '../src/server.js';
+import { RequestJournal } from '../src/request-journal.js';
 
 function tmpEnv(contents = '') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'freechain-'));
@@ -160,6 +161,16 @@ test('/admin/state never includes a full key, only masks', async () => {
   const body = await (await fetch(`${base}/admin/state`)).text();
   assert.ok(!body.includes('supersecretvalue'), 'the raw key must never reach the browser');
   assert.match(body, /openrouter0/);
+
+  const memoryOnly = await boot({ journal: new RequestJournal({ enabled: false, maxEntries: 17 }) });
+  const state = await (await fetch(`${memoryOnly.base}/admin/state`)).json();
+  assert.deepEqual(state.journal, {
+    persistence: 'memory-only',
+    maxEntries: 17,
+    rotateAtBytes: 5 * 1024 * 1024,
+    predecessors: 1,
+  });
+  memoryOnly.app.close();
 
   app.close();
   if (prior === undefined) delete process.env.FREECHAIN_OPENROUTER0_API_KEY;
