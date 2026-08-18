@@ -341,11 +341,12 @@ Four properties hold regardless of how the switches are set:
    switches from anything the model proposes. Enabling them requires a human on
    the Settings tab. The system prompt says the same thing; this is the part
    that enforces it.
-4. **The Logs page states the policy in force.** Its privacy callout is
-   rewritten from the live settings by `renderRetentionNotice()`. With any raw
-   switch on it turns amber and says so, because a screen that claimed
-   "never stored" while capture was running would be lying at exactly the
-   moment it mattered.
+4. **The Logs page states the policy in force.** Its retention callout ships
+   hidden and empty, and `renderRetentionNotice()` fills it from the live
+   settings only while something is actually being retained. There is no static
+   "never stored" sentence to become a lie: the page is silent when nothing is
+   captured and amber when something is, which is the only arrangement that
+   stays true at the moment it matters.
 
 #### On `credentials`
 
