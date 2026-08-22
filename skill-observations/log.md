@@ -223,3 +223,18 @@ Observations captured during task-oriented work.
 **Suggested improvement:** Before tagging, validate the version and root command map in both the package manifest and lockfile. Regenerate the lockfile with lifecycle scripts disabled, then rerun tests and artifact inspection.
 
 **Principle:** Release metadata is a multi-file contract, not a single version field.
+
+### Observation 15: Populate every data-heavy workspace before geometry sign-off
+
+**Status:** OPEN
+**Date:** 2026-08-21
+**Session context:** FreeChain v0.6.1 installed-release UI verification
+**Skill:** impeccable
+**Type:** open-source
+**Phase/Area:** Responsive dashboard verification
+
+**Issue:** Overview passed hostile-string checks at desktop and mobile widths, but the populated Logs workspace still placed fixed-grid controls outside 100 record cards at 1280 px. A shared-shell pass did not exercise the page with the densest real data.
+
+**Suggested improvement:** Populate each data-heavy workspace with maximum-length metadata before release sign-off, activate that workspace, and run the canonical card geometry check there. Include record controls and secondary labels, not only page-level overflow.
+
+**Principle:** Responsive verification is page-state coverage, not merely viewport coverage.

@@ -22,6 +22,16 @@ client ──► http://127.0.0.1:4853/v1  (model: "auto")
 
 No runtime dependencies. Runs on Windows, macOS, and Linux.
 
+## v0.6.1 hotfix
+
+- **Logs stay inside their cards:** the desktop log grid now lets its flexible
+  columns shrink with the available dashboard width. At 1280 px, long request
+  ids and provider metadata remain contained without pushing the chevron past
+  the log-record border or creating page overflow.
+- **Shared UI contract restored:** the canonical card-containment selector
+  block is byte-identical across FreeChain, SubChain, and VisionChain again.
+  The 380 px mobile log layout is unchanged.
+
 ## v0.6.0 highlights
 
 - **Ox Alpha first:** the healthy OpenCode Zen slot is first and OpenRouter Ox
