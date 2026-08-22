@@ -288,6 +288,22 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 - **Verification**: The regression test covers an orphan tool call. Live FreeChain model
   `auto/coding:free` reproduced the condition and displayed the new Failed/error recovery state.
 
+### FC-017: Keep desktop log controls inside each record card
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Bug
+- **Description**: At a 1280 px viewport, the eight-column Logs summary grid required 30 px more
+  width than its record card. Every chevron and two secondary labels rendered outside their card
+  even though the page itself hid the overflow.
+- **Resolution**: The five flexible desktop grid tracks now use zero minimums and retain their
+  existing fractional proportions, fixed usage columns, labels, and mobile layout. The same
+  declaration was synchronized across FreeChain, SubChain, and VisionChain. The canonical
+  card-containment block was also restored to the byte-identical union selector list.
+- **Verification**: The previously failing installed dashboard check now reports 170 cards, zero
+  spills, and no page overflow at 1280 px with a 121-character request-session id. FreeChain's 109
+  tests, SubChain's 146 tests, and VisionChain's 36 tests plus config check all pass. The unchanged
+  380 px mobile rule retains the hostile-string proof captured before this desktop-only change.
+
 ---
 
 ## How to File an Issue
