@@ -110,11 +110,39 @@ export function saveChainConfig(chain, file = DEFAULT_CHAIN) {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   raw.chain = chain.links.map((l) => {
     const entry = { provider: l.provider, model: l.model };
+    const defaultBaseUrl = providerDef(l.provider).baseUrl?.replace(/\/+$/, '');
+    if (l.baseUrl && l.baseUrl !== defaultBaseUrl) entry.baseUrl = l.baseUrl;
     if (!l.free) entry.free = false;
     if (l.note) entry.note = l.note;
     return entry;
   });
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+}
+
+// The failover knobs the dashboard is allowed to tune at runtime. Everything
+// else in chain.config.json (the chain array, per-link base URLs) stays
+// file-only, so a settings POST can never rewrite the routing table.
+export const TUNABLE_SETTINGS = [
+  'requestTimeoutMs',
+  'cooldownMs',
+  'maxAttempts',
+  'advanceOnWrappedServerErrors',
+];
+
+/**
+ * Persist the failover tuning settings back to `chain.config.json`, leaving the
+ * `chain` array and every unrelated field untouched. Only the known
+ * `TUNABLE_SETTINGS` keys are written, so a malformed patch cannot inject
+ * arbitrary top-level JSON. Callers validate ranges first (see
+ * `updateChainSettings` in admin.js).
+ */
+export function saveChainSettings(settings, file = DEFAULT_CHAIN) {
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const key of TUNABLE_SETTINGS) {
+    if (settings[key] !== undefined) raw[key] = settings[key];
+  }
+  fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+  return settings;
 }
 
 /**
@@ -149,6 +177,10 @@ export function loadChain(file = DEFAULT_CHAIN) {
       requestTimeoutMs: parsed.requestTimeoutMs ?? 90_000,
       cooldownMs: parsed.cooldownMs ?? 60_000,
       maxAttempts: parsed.maxAttempts ?? null, // null = every configured candidate
+      // Advance the chain when a provider wraps a server-side failure in a
+      // 400/422 body (see wrapsRetryableUpstreamError in chain.js). On by
+      // default; the dashboard's Failover tuning card exposes the switch.
+      advanceOnWrappedServerErrors: parsed.advanceOnWrappedServerErrors ?? true,
       ...parsed.settings,
     },
   };

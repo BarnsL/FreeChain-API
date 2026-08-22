@@ -3,12 +3,22 @@
     "Ordered failover chain. The first candidate that answers wins.",
     "A candidate is one link paired with one configured credential, so a",
     "provider with several keys gives several chances before the chain moves on.",
+    "Numbered provider ids pin a link to one account slot.",
     "Links whose provider has no key are skipped, so shipping more links than",
     "you have accounts for is fine. No secrets here, safe to commit."
   ],
   "requestTimeoutMs": 90000,
   "cooldownMs": 60000,
   "chain": [
+    {
+      "provider": "opencode-zen1",
+      "model": "x-preview-f-free",
+      "note": "healthy OpenCode Ox Alpha slot"
+    },
+    {
+      "provider": "openrouter",
+      "model": "stealth/ox-alpha"
+    },
     {
       "provider": "openrouter",
       "model": "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -19,7 +29,7 @@
       "note": "self-hosted router, tried first when running"
     },
     {
-      "provider": "opencode-zen",
+      "provider": "opencode-zen1",
       "model": "nemotron-3-ultra-free"
     },
     {
@@ -43,11 +53,11 @@
       "model": "openai/gpt-oss-120b"
     },
     {
-      "provider": "opencode-zen",
+      "provider": "opencode-zen1",
       "model": "mimo-v2.5-free"
     },
     {
-      "provider": "opencode-zen",
+      "provider": "opencode-zen1",
       "model": "laguna-s-2.1-free"
     },
     {
@@ -61,10 +71,6 @@
     {
       "provider": "groq",
       "model": "openai/gpt-oss-20b"
-    },
-    {
-      "provider": "opencode-zen",
-      "model": "deepseek-v4-flash-free"
     },
     {
       "provider": "cerebras",
@@ -137,6 +143,11 @@
     {
       "provider": "openrouter",
       "model": "nvidia/nemotron-3-nano-30b-a3b:free"
+    },
+    {
+      "provider": "opencode-zen0",
+      "model": "x-preview-f-free",
+      "note": "retained failing credential, pinned last by owner request"
     }
   ]
 }

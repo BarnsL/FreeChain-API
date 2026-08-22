@@ -14,6 +14,7 @@ import {
   saveSlotKeys,
   testSlot,
   reorderChain,
+  updateChainSettings,
   getAccessKey,
   rotateAccessKey,
   accessKeyMatches,
@@ -28,6 +29,21 @@ import {
   summarizeInput,
   summarizeJsonOutput,
 } from './request-journal.js';
+import { createFreeChainOperator } from './operator-freechain.js';
+import { createOperatorHttp } from './operator-http.js';
+import {
+  activeHarness,
+  applyHarnessConfig,
+  createHarness,
+  loadHarnessLibrary,
+  removeHarness,
+  resolveHarnessFile,
+  saveHarnessLibrary,
+  setActiveHarness,
+  updateHarness,
+} from './harness.js';
+import { listPresetEntries, readPresetEntry } from './presets.js';
+import { resolveDataDir } from './storage.js';
 
 // A packaged binary ships its webui/ folder next to the executable, not
 // next to this source file.
@@ -37,15 +53,38 @@ const WEBUI_DIR = IS_SEA
 const DEEP_HEALTH_MIN_INTERVAL_MS = 60_000;
 const DEEP_HEALTH_MAX_TIMEOUT_MS = 15_000;
 const PASSIVE_JOURNAL_ROUTES = new Set(['/v1/logs', '/v1/status']);
-const ADMIN_AUDIT_ROUTES = new Map([
-  ['GET /admin/access-key', ['access-key-revealed', 'access-key']],
-  ['POST /admin/access-key/rotate', ['access-key-rotated', 'access-key']],
-  ['POST /admin/keys', ['provider-keys-updated', 'provider-slot']],
-  ['POST /admin/test', ['provider-tested', 'provider-slot']],
-  ['POST /admin/chain/reorder', ['chain-reordered', 'chain']],
-  ['POST /admin/shortcut/create', ['shortcut-created', 'shortcut']],
-  ['POST /admin/shortcut/dismiss', ['shortcut-dismissed', 'shortcut']],
-]);
+/**
+ * Which admin mutations are worth an audit record, and what to call them.
+ *
+ * Exact routes first, then the parameterized ones whose entity id is in the
+ * path. Returning null means "not audited" — reads that change nothing.
+ */
+function adminAuditFor(method, pathname) {
+  const exact = new Map([
+    ['GET /admin/access-key', ['access-key-revealed', 'access-key']],
+    ['POST /admin/access-key/rotate', ['access-key-rotated', 'access-key']],
+    ['POST /admin/keys', ['provider-keys-updated', 'provider-slot']],
+    ['POST /admin/test', ['provider-tested', 'provider-slot']],
+    ['POST /admin/chain/reorder', ['chain-reordered', 'chain']],
+    ['POST /admin/chain/settings', ['failover-settings-updated', 'chain']],
+    ['POST /admin/harnesses', ['harness-created', 'harness']],
+    ['POST /admin/harness/preset', ['harness-preset-applied', 'harness']],
+    ['POST /admin/harnesses/active', ['harness-activated', 'harness']],
+    ['POST /admin/shortcut/create', ['shortcut-created', 'shortcut']],
+    ['POST /admin/shortcut/dismiss', ['shortcut-dismissed', 'shortcut']],
+  ]).get(`${method} ${pathname}`);
+  if (exact) return { action: exact[0], entityType: exact[1], entityId: exact[2] };
+  const patterns = [
+    [/^POST \/admin\/harnesses\/([a-z0-9-]+)$/, 'harness-updated', 'harness'],
+    [/^DELETE \/admin\/harnesses\/([a-z0-9-]+)$/, 'harness-deleted', 'harness'],
+  ];
+  const route = `${method} ${pathname}`;
+  for (const [pattern, action, entityType] of patterns) {
+    const match = pattern.exec(route);
+    if (match) return { action, entityType, entityId: match[1] };
+  }
+  return null;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -128,7 +167,12 @@ function serveStatic(res, pathname) {
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
-    'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+    // `img-src` allows data: only because the favicon is an inline SVG data URI
+    // in index.html; without it every page load logged a CSP violation and the
+    // tab icon never painted. Scripts stay 'self'-only, which is what matters:
+    // a data: image cannot execute.
+    'Content-Security-Policy':
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
   });
   res.end(fs.readFileSync(file));
   return true;
@@ -193,14 +237,31 @@ export function createServer(chain, {
   verbose = false,
   ui = true,
   journal = new RequestJournal({ enabled: false }),
+  configFile = undefined,
+  harnessFile = resolveHarnessFile(),
+  presetDataDir = resolveDataDir(),
 } = {}) {
   const cooldowns = new Cooldowns(chain.settings.cooldownMs);
   const stats = { served: 0, failed: 0, startedAt: Date.now() };
   let nextDeepHealthAt = 0;
 
+  // The chat operator may use FreeChain itself as its OpenAI-compatible model.
+  // This path bypasses HTTP only to avoid recursively authenticating to self;
+  // it still uses the same dispatch/fallback/cooldown machinery.
+  const selfComplete = async (messages, signal) => {
+    const result = await dispatch(chain, cooldowns, { model: 'auto', messages, stream: false, max_tokens: 2200 }, { signal });
+    const payload = await result.response.json();
+    return payload?.choices?.[0]?.message?.content || JSON.stringify(payload);
+  };
+  const operator = createFreeChainOperator({ chain, journal, cooldowns, configFile, selfComplete });
+  const handleOperator = createOperatorHttp(operator);
+
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    const auditDefinition = ADMIN_AUDIT_ROUTES.get(`${req.method} ${url.pathname}`);
+    if (ui && url.pathname.startsWith('/admin/operator/')) {
+      if (await handleOperator(req, res, url)) return;
+    }
+    const auditDefinition = adminAuditFor(req.method, url.pathname);
     const shouldJournal = req.method !== 'OPTIONS' && (
       (url.pathname.startsWith('/v1/') && !PASSIVE_JOURNAL_ROUTES.has(url.pathname)) ||
       Boolean(auditDefinition)
@@ -212,7 +273,7 @@ export function createServer(chain, {
       route: url.pathname,
       method: req.method,
       client: requestMetadata(req),
-      ...(auditDefinition ? { audit: { action: auditDefinition[0], entityType: auditDefinition[1] } } : {}),
+      ...(auditDefinition ? { audit: { ...auditDefinition } } : {}),
     } : null;
     let journalFinalized = false;
     const finalizeJournal = (overrides = {}) => {
@@ -310,7 +371,12 @@ export function createServer(chain, {
         if (url.pathname === '/admin/state' && req.method === 'GET') {
           return json(res, 200, {
             ...inventory(chain),
+            ...(() => {
+              const library = loadHarnessLibrary(harnessFile);
+              return { harnesses: library.harnesses, activeHarnessId: library.activeId };
+            })(),
             accessKeyMasked: getAccessKey() ? '••••••••' : null,
+            settings: chain.settings,
             cooling: cooldowns.snapshot(),
             journal: journal.status(),
             stats: { ...stats, uptimeSeconds: Math.round((Date.now() - stats.startedAt) / 1000) },
@@ -344,6 +410,89 @@ export function createServer(chain, {
           journalRecord.audit.count = order.length;
           reorderChain(chain, order);
           return json(res, 200, { ok: true, count: chain.links.length });
+        }
+        // Tune the failover behaviour (timeout, cooldown, candidate cap, and
+        // whether wrapped upstream errors advance the chain) from the Chain
+        // page. Persisted to chain.config.json and applied live — the running
+        // Cooldowns predates this request, so its window is re-synced here so a
+        // change takes effect on the very next attempt without a restart.
+        if (url.pathname === '/admin/chain/settings' && req.method === 'POST') {
+          const patch = await readJson(req);
+          const settings = updateChainSettings(chain, patch, configFile);
+          cooldowns.cooldownMs = settings.cooldownMs;
+          journalRecord.audit.count = Object.keys(patch || {}).length;
+          return json(res, 200, { settings });
+        }
+        // ── Harness ───────────────────────────────────────────────
+        //
+        // FreeChain has a single access key, so unlike SubChain there is no
+        // per-key assignment: the Default Harness is what every request gets.
+        // The library shape is kept anyway so the two apps read and write the
+        // same file format.
+        if (url.pathname === '/admin/harnesses' && req.method === 'GET') {
+          return json(res, 200, loadHarnessLibrary(harnessFile));
+        }
+        if (url.pathname === '/admin/harnesses' && req.method === 'POST') {
+          const input = await readJson(req);
+          const library = loadHarnessLibrary(harnessFile);
+          const harness = createHarness(library, input);
+          journalRecord.audit.entityId = harness.id;
+          saveHarnessLibrary(library, harnessFile);
+          return json(res, 201, { harness });
+        }
+        if (url.pathname === '/admin/harnesses/active' && req.method === 'POST') {
+          const { id } = await readJson(req);
+          const library = loadHarnessLibrary(harnessFile);
+          setActiveHarness(library, String(id || ''));
+          journalRecord.audit.entityId = library.activeId;
+          saveHarnessLibrary(library, harnessFile);
+          return json(res, 200, { activeId: library.activeId });
+        }
+        const harnessMatch = /^\/admin\/harnesses\/([a-z0-9-]+)$/.exec(url.pathname);
+        if (harnessMatch && req.method === 'POST') {
+          const library = loadHarnessLibrary(harnessFile);
+          const harness = updateHarness(library, harnessMatch[1], await readJson(req));
+          saveHarnessLibrary(library, harnessFile);
+          return json(res, 200, { harness });
+        }
+        if (harnessMatch && req.method === 'DELETE') {
+          const library = loadHarnessLibrary(harnessFile);
+          removeHarness(library, harnessMatch[1]);
+          saveHarnessLibrary(library, harnessFile);
+          return json(res, 200, { ok: true });
+        }
+        // Imported preset bodies are private local data. The dashboard reads
+        // them through here so nothing ever has to leave the loopback origin.
+        if (url.pathname === '/admin/presets' && req.method === 'GET') {
+          return json(res, 200, listPresetEntries({
+            dataDir: presetDataDir,
+            source: url.searchParams.get('source') || null,
+            component: url.searchParams.get('component') || null,
+            query: url.searchParams.get('query') || '',
+            offset: url.searchParams.get('offset') || 0,
+            limit: url.searchParams.get('limit') || 50,
+          }));
+        }
+        if (url.pathname === '/admin/presets/read' && req.method === 'GET') {
+          return json(res, 200, readPresetEntry({ dataDir: presetDataDir, id: url.searchParams.get('id') }));
+        }
+        if (url.pathname === '/admin/harness/preset' && req.method === 'POST') {
+          const { harnessId = 'default', id, target = 'operatingInstructions', mode = 'replace' } = await readJson(req);
+          journalRecord.audit.entityId = harnessId;
+          const preset = readPresetEntry({ dataDir: presetDataDir, id });
+          const library = loadHarnessLibrary(harnessFile);
+          const selected = library.harnesses.find((harness) => harness.id === harnessId);
+          if (!selected) return fail(res, 404, `Unknown Harness: ${harnessId}`);
+          const current = selected.components?.[target] || '';
+          const value = mode === 'append' && current ? `${current}
+
+${preset.content}` : preset.content;
+          const updated = updateHarness(library, harnessId, { components: { [target]: value } });
+          saveHarnessLibrary(library, harnessFile);
+          return json(res, 200, {
+            harness: updated,
+            preset: { id: preset.id, title: preset.title, source: preset.source },
+          });
         }
         // Windows exe/zip releases only: offers a Start Menu shortcut once,
         // and only after the browser asks — nothing is created unprompted.
@@ -383,6 +532,7 @@ export function createServer(chain, {
         provider: url.searchParams.get('provider') || undefined,
         app: url.searchParams.get('app') || undefined,
         route: url.searchParams.get('route') || undefined,
+        harness: url.searchParams.get('harness') || undefined,
         q: url.searchParams.get('q') || undefined,
       }), { cors: true });
     }
@@ -415,8 +565,17 @@ export function createServer(chain, {
     }
 
     if (url.pathname === '/v1/chat/completions' && req.method === 'POST') {
+      // Read once per request so input, output and auth capture all agree on
+      // the same policy even if the host flips a switch mid-flight.
+      const logPolicy = operator.runtime.readSettings().logs;
+      // Retained only on request: the most common reason to want it is a
+      // rejected key, where the useful question is what the caller actually
+      // presented rather than what it should have presented.
+      const presentedCredential = logPolicy.credentials === true
+        ? String(req.headers.authorization || '').slice(0, 600) || undefined
+        : undefined;
       if (!accessKeyMatches(bearerFrom(req))) {
-        journalRecord.auth = { result: 'rejected', ownership: 'freechain-access-key' };
+        journalRecord.auth = { result: 'rejected', ownership: 'freechain-access-key', credential: presentedCredential };
         journalRecord.request = { inputSummary: 'unavailable-before-auth' };
         journalRecord.error = { code: 'invalid_api_key', category: 'authentication', httpStatus: 401, retryable: false };
         journalRecord.outcome = 'auth-rejected';
@@ -424,7 +583,7 @@ export function createServer(chain, {
           code: 'invalid_api_key',
         }, { cors: true });
       }
-      journalRecord.auth = { result: 'accepted', ownership: 'freechain-access-key' };
+      journalRecord.auth = { result: 'accepted', ownership: 'freechain-access-key', credential: presentedCredential };
       let body;
       try {
         body = await readJson(req);
@@ -432,7 +591,13 @@ export function createServer(chain, {
         journalRecord.error = { code: 'invalid_request', category: 'request', httpStatus: err.statusCode || 400, retryable: false };
         return fail(res, err.statusCode || 400, err.message, {}, { cors: true });
       }
-      const inputSummary = summarizeInput(body);
+      // Apply the active Harness before anything reads the body: the
+      // journal, the dispatcher and the provider must all see the same
+      // composed request, not the raw one the client sent.
+      const harness = activeHarness(loadHarnessLibrary(harnessFile));
+      body = applyHarnessConfig(body, harness.components);
+      journalRecord.harnessId = harness.id;
+      const inputSummary = summarizeInput(body, logPolicy);
       journalRecord.request = {
         model: inputSummary.model,
         stream: inputSummary.stream,
@@ -482,7 +647,7 @@ export function createServer(chain, {
 
         stats.served++;
         if (body.stream) {
-          const meter = createSseMeter();
+          const meter = createSseMeter(logPolicy);
           res.writeHead(200, {
             ...served,
             'Content-Type': 'text/event-stream',
@@ -499,7 +664,7 @@ export function createServer(chain, {
         }
 
         const payload = await response.text();
-        const outputSummary = summarizeJsonOutput(payload);
+        const outputSummary = summarizeJsonOutput(payload, logPolicy);
         journalRecord.result = {
           ...outputSummary,
           usage: outputSummary.usage ?? estimatedUsage(inputSummary.inputChars, outputSummary.outputChars),

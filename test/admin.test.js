@@ -2,13 +2,14 @@
 // tests here care about two things above all: the .env file survives editing
 // intact, and provider keys never leave the server in readable form.
 
+import './private-data-dir.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { setEnvVars, reloadEnv, envNames } from '../src/envfile.js';
-import { maskKey, accessKeyMatches, bearerFrom, ACCESS_KEY_VAR } from '../src/admin.js';
+import { maskKey, accessKeyMatches, bearerFrom, updateChainSettings, ACCESS_KEY_VAR } from '../src/admin.js';
 import { createServer } from '../src/server.js';
 import { RequestJournal } from '../src/request-journal.js';
 
@@ -134,6 +135,79 @@ async function boot(opts) {
   await new Promise((r) => app.listen(0, '127.0.0.1', r));
   return { app, base: `http://127.0.0.1:${app.address().port}` };
 }
+
+// ── failover tuning ───────────────────────────────────────────────────
+
+// A minimal on-disk chain config so persistence can be exercised without
+// touching the repository's real chain.config.json.
+function tmpChainConfig(extra = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'freechain-cfg-'));
+  const file = path.join(dir, 'chain.config.json');
+  fs.writeFileSync(file, JSON.stringify({ requestTimeoutMs: 90000, cooldownMs: 60000, chain: [{ provider: 'local', model: 'm' }], ...extra }, null, 2));
+  return file;
+}
+
+test('updateChainSettings validates, applies live, and persists only the knobs', () => {
+  const file = tmpChainConfig();
+  const chain = { links: [], settings: { requestTimeoutMs: 90000, cooldownMs: 60000, maxAttempts: null, advanceOnWrappedServerErrors: true } };
+
+  const out = updateChainSettings(chain, { requestTimeoutMs: 30000, cooldownMs: 15000, maxAttempts: 8, advanceOnWrappedServerErrors: false }, file);
+
+  // Applied in place so a running dispatch() sees it without a restart.
+  assert.equal(chain.settings.requestTimeoutMs, 30000);
+  assert.equal(chain.settings.maxAttempts, 8);
+  assert.equal(chain.settings.advanceOnWrappedServerErrors, false);
+  assert.equal(out, chain.settings);
+
+  // Persisted to disk, and the chain array is left untouched.
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(saved.requestTimeoutMs, 30000);
+  assert.equal(saved.advanceOnWrappedServerErrors, false);
+  assert.deepEqual(saved.chain, [{ provider: 'local', model: 'm' }]);
+});
+
+test('updateChainSettings rejects an out-of-range value with a 400', () => {
+  const file = tmpChainConfig();
+  const chain = { links: [], settings: { requestTimeoutMs: 90000, cooldownMs: 60000, maxAttempts: null } };
+  assert.throws(
+    () => updateChainSettings(chain, { requestTimeoutMs: 10 }, file),
+    (err) => { assert.equal(err.statusCode, 400); assert.match(err.message, /requestTimeoutMs/); return true; }
+  );
+  // A rejected patch must not have been half-applied.
+  assert.equal(chain.settings.requestTimeoutMs, 90000);
+});
+
+test('an empty maxAttempts field clears the candidate cap', () => {
+  const file = tmpChainConfig();
+  const chain = { links: [], settings: { requestTimeoutMs: 90000, cooldownMs: 60000, maxAttempts: 5 } };
+  updateChainSettings(chain, { maxAttempts: '' }, file);
+  assert.equal(chain.settings.maxAttempts, null);
+});
+
+test('POST /admin/chain/settings persists and echoes the effective settings', async () => {
+  const file = tmpChainConfig();
+  const { app, base } = await boot({ configFile: file });
+  try {
+    const res = await fetch(`${base}/admin/chain/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestTimeoutMs: 45000, advanceOnWrappedServerErrors: false }),
+    });
+    assert.equal(res.status, 200);
+    const { settings } = await res.json();
+    assert.equal(settings.requestTimeoutMs, 45000);
+    assert.equal(settings.advanceOnWrappedServerErrors, false);
+
+    // The dashboard reads current values back from /admin/state.
+    const state = await (await fetch(`${base}/admin/state`)).json();
+    assert.equal(state.settings.requestTimeoutMs, 45000);
+    assert.equal(state.settings.advanceOnWrappedServerErrors, false);
+
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).requestTimeoutMs, 45000);
+  } finally {
+    app.close();
+  }
+});
 
 test('a wrong access key is refused before any provider is contacted', async () => {
   const prior = process.env[ACCESS_KEY_VAR];

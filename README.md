@@ -12,19 +12,32 @@ nowhere.
 ```
 client ──► http://127.0.0.1:4853/v1  (model: "auto")
                     │
-                    ├─ omniroute      auto/coding:free      ← self-hosted, if running
-                    ├─ opencode-zen   north-mini-code-free
-                    │                   ├─ opencode-zen   key 1 → key 2
-                    │                   └─ opencode-zen0  key 1        ← account slots
-                    ├─ opencode-zen   nemotron-3-ultra-free
-                    ├─ openrouter     nvidia/nemotron-3-ultra-550b-a55b:free
-                    │                   ├─ openrouter   key 1 → key 2
-                    │                   ├─ openrouter0  key 1
-                    │                   └─ openrouter1  key 1 → key 2
-                    └─ ...            first candidate that answers wins
+                    ├─ 1  opencode-zen1  x-preview-f-free      ← Ox Alpha, pinned healthy slot
+                    ├─ 2  openrouter      stealth/ox-alpha      ← Ox Alpha, all healthy slots
+                    ├─ 3  openrouter      Nemotron Ultra :free
+                    ├─ 4  omniroute       auto/coding:free      ← self-hosted, if running
+                    ├─ …  direct and routed free fallbacks
+                    └─ 34 opencode-zen0  x-preview-f-free      ← retained unhealthy slot, last
 ```
 
 No runtime dependencies. Runs on Windows, macOS, and Linux.
+
+## v0.6.0 highlights
+
+- **Ox Alpha first:** the healthy OpenCode Zen slot is first and OpenRouter Ox
+  Alpha is second. Numbered provider ids pin account ownership, so a retained
+  unhealthy OpenCode credential stays configured only at the final link.
+- **Reliable streamed failover:** an HTTP 200 stream is accepted only after its
+  first meaningful SSE event is valid. Early error envelopes, malformed starts,
+  empty closes, and bounded-prefix failures cool that candidate and advance the
+  chain without leaking raw provider details.
+- **Operator controls:** the Chain page exposes timeout, cooldown, maximum
+  attempts, and wrapped-upstream-error behavior. Changes persist and apply live.
+- **Harness and Guide:** the dashboard includes the complete Harness editor and
+  a twelve-chapter offline Guide with matching repository documentation.
+- **Privacy-safe operations:** request lifecycle, attempts, usage, errors, and
+  cooldowns remain visible in Logs without retaining conversation content by
+  default.
 
 ## Install
 
@@ -66,11 +79,13 @@ node bin/freechain.mjs --status
 ```
 
 ```
-ok   omniroute      no key needed      auto/coding:free
-ok   opencode-zen   3 keys / 2 slots   nemotron-3-ultra-free  [opencode-zen opencode-zen0]
-ok   openrouter     5 keys / 3 slots   nvidia/nemotron-3-ultra-550b-a55b:free  [openrouter openrouter0 openrouter1]
+ok   opencode-zen1  1 key / 1 slot     x-preview-f-free
+ok   openrouter     2 keys / 2 slots   stealth/ox-alpha  [openrouter openrouter0]
+ok   openrouter     2 keys / 2 slots   nvidia/nemotron-3-ultra-550b-a55b:free  [openrouter openrouter0]
+...
+ok   opencode-zen0  1 key / 1 slot     x-preview-f-free
 
-14/14 links configured, 68 candidate(s) to try.
+34/34 links configured, 43 candidate(s) to try.
 ```
 
 ```bash
@@ -80,7 +95,7 @@ node bin/freechain.mjs
 ```
 freechain    http://127.0.0.1:4853/v1
 dashboard    http://127.0.0.1:4853/
-chain        17/18 links configured
+chain        34/34 links configured
 journal      <runtime>/logs/requests.jsonl
 ```
 
@@ -126,10 +141,32 @@ Open `http://127.0.0.1:4853/` for a web console covering everything below:
 - **Model sources** — every provider, its account slots, and the keys in each,
   with a one-request **Test** button per slot and a direct link to that
   provider's key page.
-- **Chain** — the ordered chain and each link's credential configuration state.
+- **Chain** — the ordered chain and each link's credential configuration state,
+  with drag reordering and live failover settings for request timeout, cooldown,
+  candidate limits, and wrapped upstream errors.
+- **Harness** — identity, operating, safety, tool, reasoning, output, behavior
+  and persona components, plus generation and infrastructure defaults, model
+  aliases and custom request metadata. One Harness in the library is active and
+  composes every request the access key serves. Same component vocabulary and
+  file format as SubChain. [docs/harness/README.md](docs/harness/README.md) is
+  the practical guide,
+  [docs/harness/enforcement-boundaries.md](docs/harness/enforcement-boundaries.md)
+  states field by field what FreeChain enforces as opposed to merely prompts for,
+  and [docs/HARNESS.md](docs/HARNESS.md) is the component reference.
+- **Guide** — a first-class, offline learning page between Harness and Logs.
+  Twelve original chapters (agents, prompting weaker models, skills, browsers,
+  MCP, RAG, the AI stack, fine-tuning, accelerators) each state what FreeChain
+  enforces versus what the calling application must provide, using the same
+  enforcement vocabulary as the Harness page. Every instruction component
+  deep-links into it. Informed by ByteByteGo's *12 AI Visuals* as a learning
+  framework, credited and linked, with original diagrams rather than copied
+  graphics. Mirrored for repo reading under
+  [docs/user-guide/](docs/user-guide/README.md).
 - **Logs** — newest-first request and admin lifecycle metadata, filters, token
   summaries, latency, provider attempts, error classifications, and cooling.
-  Prompts, responses, tool bodies, and credentials are never stored.
+  Metadata only unless you deliberately turn on retention under **Chat →
+  Settings → Log policy**; when you do, the Logs page says so in a warning it
+  only shows while something is actually being retained.
 
 The dashboard writes to `.env` on this machine. Provider keys are returned to
 the page **masked only** (`sk-or••••••1234`) — the browser can prove a key
@@ -299,7 +336,7 @@ excluded from the journal so polling cannot create recursive records.
 `chain.config.json`, in order. No secrets in it — safe to commit and share.
 
 ```json
-{ "provider": "opencode-zen", "model": "north-mini-code-free" }
+{ "provider": "opencode-zen1", "model": "x-preview-f-free" }
 ```
 
 The shipped chain contains only free links. `free: false` is reserved for an
@@ -308,8 +345,10 @@ overridden per entry. Providers and their default base URLs live in
 `src/providers.js`.
 
 A **candidate** is one link paired with one account slot and one of that
-slot's keys. Eighteen links across a handful of slots is easily 60+ candidates,
-all tried in order before the request is given up on.
+slot's keys. The default chain has 34 free links. Bare provider ids fan out
+across their configured account slots, while numbered ids pin one slot. This is
+how a credential can remain configured at the final position without joining
+earlier links from the same provider family.
 
 ## Failover rules
 
@@ -318,8 +357,16 @@ What advances the chain and what stops it is the core of the design:
 | Upstream result | Behaviour |
 |---|---|
 | `429`, `5xx`, timeout, connection refused | Next candidate. That one cools off (honours `Retry-After`) |
-| `401`, `403`, `404` | Next candidate — a bad key is that account's problem |
-| `400`, `422` | **Stop.** The request is malformed, except OmniRoute's diagnostic 400 for an exhausted internal pool, which advances the outer chain. |
+| `401`, `403`, `404` | Next candidate. A bad key or missing model belongs to that account or route |
+| `400`, `422` with a genuine validation error | **Stop.** Another provider would reject the same request |
+| `400`, `422` wrapping a provider/server failure | Next candidate when wrapped-error advancement is enabled, including OmniRoute pool diagnostics |
+| HTTP `200` SSE error before the first valid event | Next candidate. The failed stream cools before downstream headers are committed |
+| Caller abort | Stop immediately without cooling or trying another provider |
+
+The streamed first-event gate examines at most 64 KiB before a meaningful SSE
+event. Accepted bytes are replayed unchanged. Once a valid event has reached the
+client, later stream failures cannot be retried transparently without risking
+duplicate text or tool calls.
 
 `--status`, `/healthz`, and the dashboard's configured indicator report
 credential configuration only. They do not contact providers. To deliberately
@@ -365,7 +412,9 @@ npm test
 
 Failover, slot fan-out and key rotation are tested against real local HTTP
 upstreams rather than a mocked `fetch`, so the tests exercise the actual
-request path.
+request path. The v0.6.0 suite contains 109 tests: 108 pass on Windows and one
+owner-only permission-mode check is skipped where the operating system cannot
+enforce the Unix mode assertion.
 
 ## License
 

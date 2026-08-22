@@ -9,7 +9,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { PROVIDERS, FAMILIES, ACCOUNT_SLOTS, MAX_KEYS_PER_ACCOUNT, envBaseFor } from './providers.js';
-import { resolveKeys, resolveAccounts, chainStatus, saveChainConfig, ROOT } from './config.js';
+import { resolveKeys, resolveAccounts, chainStatus, saveChainConfig, saveChainSettings, ROOT } from './config.js';
 import { setEnvVars, reloadEnv } from './envfile.js';
 
 export const ENV_FILE = process.env.FREECHAIN_ENV_FILE || path.join(ROOT, '.env');
@@ -185,6 +185,49 @@ export function reorderChain(chain, order) {
     return { ...link, index: pos };
   });
   saveChainConfig(chain);
+}
+
+// Range guards for the dashboard's Failover tuning card. They keep a typo from
+// wedging the gateway: a 10ms timeout would fail every provider before it could
+// answer, and a 20-minute one would hang the caller. maxAttempts is a candidate
+// cap; null (or a blank field) means "try every configured candidate".
+const SETTING_BOUNDS = {
+  requestTimeoutMs: { min: 1_000, max: 600_000 },
+  cooldownMs: { min: 0, max: 3_600_000 },
+  maxAttempts: { min: 1, max: 1_000 },
+};
+
+/**
+ * Validate a failover-settings patch from the dashboard, apply it to the live
+ * in-memory `chain.settings`, and persist it to chain.config.json. Only the
+ * four tunable knobs are honoured; unknown keys are ignored and out-of-range
+ * numbers throw a 400 rather than being silently clamped. `chain.settings` is
+ * mutated in place so `dispatch()` sees the change on the next request without a
+ * restart; the caller still re-syncs the live Cooldowns' window (see
+ * `/admin/chain/settings` in server.js). Returns the effective settings.
+ */
+export function updateChainSettings(chain, patch = {}, file = undefined) {
+  const num = (key, value) => {
+    const n = Number(value);
+    const { min, max } = SETTING_BOUNDS[key];
+    if (!Number.isFinite(n) || n < min || n > max) {
+      throw Object.assign(new Error(`${key} must be a number between ${min} and ${max}`), { statusCode: 400 });
+    }
+    return Math.round(n);
+  };
+
+  if (patch.requestTimeoutMs !== undefined) chain.settings.requestTimeoutMs = num('requestTimeoutMs', patch.requestTimeoutMs);
+  if (patch.cooldownMs !== undefined) chain.settings.cooldownMs = num('cooldownMs', patch.cooldownMs);
+  if (patch.maxAttempts !== undefined) {
+    chain.settings.maxAttempts =
+      patch.maxAttempts === null || patch.maxAttempts === '' ? null : num('maxAttempts', patch.maxAttempts);
+  }
+  if (patch.advanceOnWrappedServerErrors !== undefined) {
+    chain.settings.advanceOnWrappedServerErrors = Boolean(patch.advanceOnWrappedServerErrors);
+  }
+
+  saveChainSettings(chain.settings, file);
+  return chain.settings;
 }
 
 /** Live check: does this slot actually answer for one of the chain's models? */

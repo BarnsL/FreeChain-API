@@ -34,17 +34,6 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 - **Acceptance**: `chain.config.json` entries accept an optional `timeoutMs` field that
   overrides the global default for that link.
 
-### FC-003: Streaming error handling
-- **Status**: OPEN
-- **Priority**: P1
-- **Type**: Bug
-- **Description**: If a provider returns HTTP 200 and begins streaming but then errors
-  mid-stream (malformed SSE, connection drop), the client receives a truncated response
-  with no error indication. The chain cannot retry because headers are already sent.
-- **Acceptance**: Document the limitation. Consider a buffered-start mode where the first
-  N bytes are buffered before committing to the response, allowing a retry if the stream
-  fails early.
-
 ### FC-004: Health check endpoint with per-provider latency
 - **Status**: DONE
 - **Priority**: P2
@@ -131,6 +120,44 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 ---
 
 ## Closed Issues
+
+### FC-003: Streaming error handling
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Bug
+- **Description**: Nous Man twice received a provider-failed notice after three retries even
+  though FreeChain had more configured candidates. The selected provider returned HTTP 200,
+  then emitted an SSE overload error before any usable content. FreeChain recorded `ok`, applied
+  no cooldown, and handed the live stream to the client, so each Hermes retry selected the same
+  top candidate instead of advancing the chain.
+- **Incident notice**:
+
+  ```text
+  [12:47 PM] APP Nous Man: still chewing through it
+  [12:48 PM] APP Nous Man: ⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics.
+  [1:02 PM] Sleepy Cat [AMD]: Try again
+  [1:03 PM] APP Nous Man: ⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics.
+  ```
+- **Root cause**: `dispatch()` accepted `response.ok` before inspecting a streaming response's
+  first meaningful SSE event. HTTP success and streamed application success were incorrectly
+  treated as the same boundary.
+- **Resolution**: A bounded 64 KiB first-event gate now rejects early SSE errors, malformed or
+  empty starts, read failures, and oversized prefixes before server headers are committed. The
+  failed candidate records a sanitized `stream-error`, cools, and advances. Accepted bytes are
+  replayed exactly. Healthy OpenCode and OpenRouter Ox Alpha routes are first and second. The
+  owner-required failing OpenCode credential remains configured as the final pinned link.
+- **RCA**: `docs/RCA-NOUS-MAN-FREECHAIN-SSE-2026-08-21.md`
+- **Verification**: Regression RED reproduced selection of the first broken stream. GREEN selected
+  the second link, preserved its exact SSE bytes, and cooled the first. Review regressions also
+  proved that an oversized transport chunk cannot reject an early valid event and a caller abort
+  cannot cool or advance the chain. The full suite passed 108 with 0 failures and 1 expected
+  Windows skip. The installed 34-link GUI showed healthy OpenCode Ox first, OpenRouter Ox second,
+  and the retained bad OpenCode slot last. Packaged OpenCode and OpenRouter Ox streams each served
+  a required tool call in one attempt. Card geometry passed at 1280 px and 380 px with a hostile
+  string, no spills, and no page overflow. Nous Man's gateway restarted with Discord ready, its
+  compression chain contains only supported Ox routes plus free Nemotron, and a local Hermes
+  one-shot through configured FreeChain returned the exact verification sentinel. Full evidence
+  and rollback details are in the RCA.
 
 ### FC-001: Add request logging to disk
 - **Status**: DONE

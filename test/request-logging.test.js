@@ -1,3 +1,4 @@
+import './private-data-dir.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -121,6 +122,10 @@ test('successful JSON responses record exact usage and never retain content', as
     assert.deepEqual(record.result.usage, { inputTokens: 11, outputTokens: 7, totalTokens: 18, source: 'exact' });
     assert.equal(record.attempts.length, 1);
     assert.equal(record.served.provider, 'local');
+    // The control plane can retain bounded, redacted prompt summaries, but
+    // that is opt-in. With default settings nothing derived from the prompt
+    // or the response body may reach the journal.
+    assert.deepEqual(record.request.inputSummary.promptSummary, []);
     assert.doesNotMatch(JSON.stringify(page), /PRIVATE_INPUT_SENTINEL|PRIVATE_OUTPUT_SENTINEL/);
   } finally {
     await new Promise((done) => app.close(done));

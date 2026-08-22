@@ -1,12 +1,15 @@
 // Failover behaviour is the whole product, so it is tested against a real
 // local upstream rather than a mocked fetch.
 
+import './private-data-dir.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { Cooldowns, dispatch, ChainError } from '../src/chain.js';
 import { createServer } from '../src/server.js';
 import { ACCESS_KEY_VAR } from '../src/admin.js';
+import { loadChain } from '../src/config.js';
 
 function upstream(handler) {
   const server = http.createServer((req, res) => {
@@ -47,6 +50,29 @@ function chainOf(...links) {
 }
 
 const askBody = { messages: [{ role: 'user', content: 'ping' }] };
+
+test('the default Ox Alpha routes pin the bad OpenCode slot at the very back', () => {
+  // Break caught: a bare OpenCode family link expands the known bad slot beside
+  // the good key, so it is not enough to move one row in the visible chain.
+  const chain = loadChain(fileURLToPath(new URL('../chain.config.json', import.meta.url)));
+
+  assert.deepEqual(
+    chain.links.slice(0, 2).map(({ provider, model }) => [provider, model]),
+    [
+      ['opencode-zen1', 'x-preview-f-free'],
+      ['openrouter', 'stealth/ox-alpha'],
+    ],
+  );
+  assert.deepEqual(
+    [chain.links.at(-1).provider, chain.links.at(-1).model],
+    ['opencode-zen0', 'x-preview-f-free'],
+  );
+  assert.equal(
+    chain.links.slice(0, -1).some(({ provider }) => provider === 'opencode-zen' || provider === 'opencode-zen0'),
+    false,
+    'the retained bad slot must not fan into an earlier OpenCode family link',
+  );
+});
 
 test('falls through a rate-limited link to the next one', async () => {
   const a = await upstream(status(429));
@@ -99,6 +125,116 @@ test('a 400 stops the chain instead of burning every link', async () => {
   a.close(); b.close();
 });
 
+test('a 200 SSE error before the first valid event advances the chain', async () => {
+  // Break caught: treating HTTP 200 as success before inspecting the first SSE
+  // event returns an upstream error to the caller and retries the same candidate.
+  const providerError = 'data: {"error":{"type":"server_error","message":"Service temporarily overloaded"}}\n\n';
+  const validStream = 'data: {"choices":[{"delta":{"content":"OX_OK"}}]}\n\ndata: [DONE]\n\n';
+  const a = await upstream((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(providerError);
+  });
+  const b = await upstream((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(validStream);
+  });
+  const chain = chainOf({ model: 'first', port: a.port }, { model: 'second', port: b.port });
+  const cooldowns = new Cooldowns(5_000);
+
+  try {
+    const { response, link, attempts } = await dispatch(
+      chain,
+      cooldowns,
+      { ...askBody, stream: true },
+    );
+
+    assert.equal(link.model, 'second');
+    assert.deepEqual(attempts.map(({ outcome }) => outcome), ['stream-error', 'ok']);
+    assert.equal(cooldowns.isCooling('0:local:0'), true);
+    assert.equal(await response.text(), validStream, 'the accepted stream must preserve every byte');
+  } finally {
+    a.close(); b.close();
+  }
+});
+
+test('the SSE prefix cap ignores bytes after a valid first event in the same transport chunk', async () => {
+  // Break caught: Web Stream chunk boundaries are transport details. A large
+  // chunk must not trip the prefix cap when its first valid event ends early.
+  const validEvent = 'data: {"choices":[{"delta":{"content":"OX_OK"}}]}\n\n';
+  const oversizedChunk = validEvent + `: ${'x'.repeat(70 * 1024)}\n\n`;
+  const originalFetch = globalThis.fetch;
+  const encoded = new TextEncoder().encode(oversizedChunk);
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoded);
+      controller.close();
+    },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+
+  try {
+    const { response, link, attempts } = await dispatch(
+      chainOf({ model: 'first', port: 1 }),
+      new Cooldowns(5_000),
+      { ...askBody, stream: true },
+    );
+
+    assert.equal(link.model, 'first');
+    assert.deepEqual(attempts.map(({ outcome }) => outcome), ['ok']);
+    assert.equal(await response.text(), oversizedChunk, 'the full transport chunk must replay unchanged');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('an abort during SSE gate cancellation does not cool or advance the chain', async () => {
+  // Break caught: an abort can arrive while cancel() is settling. That is the
+  // caller leaving, not a provider failure, so it must not mutate routing state.
+  const originalFetch = globalThis.fetch;
+  const abort = new AbortController();
+  const cooldowns = new Cooldowns(5_000);
+  const encoder = new TextEncoder();
+  let fetches = 0;
+  globalThis.fetch = async () => {
+    fetches++;
+    if (fetches > 1) {
+      return new Response('data: {"choices":[{"delta":{"content":"wrong"}}]}\n\n', {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    }
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"error":{"message":"overloaded"}}\n\n'));
+      },
+      cancel() {
+        abort.abort(new Error('caller gone'));
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  try {
+    await assert.rejects(
+      () => dispatch(
+        chainOf({ model: 'first', port: 1 }, { model: 'second', port: 2 }),
+        cooldowns,
+        { ...askBody, stream: true },
+        { signal: abort.signal },
+      ),
+      /caller gone|aborted/i,
+    );
+    assert.equal(fetches, 1, 'an aborted caller must not advance to another provider');
+    assert.equal(cooldowns.isCooling('0:local:0'), false, 'an aborted caller must not cool the provider');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('an OmniRoute diagnostic 400 falls through to the next candidate', async () => {
   const a = await upstream(status(400, JSON.stringify({
     error: { message: 'internal pool exhausted' },
@@ -119,6 +255,49 @@ test('an OmniRoute diagnostic 400 falls through to the next candidate', async ()
   } finally {
     a.close(); b.close();
   }
+});
+
+test('a 400 that wraps an upstream server error advances the chain', async () => {
+  // Aggregators (OpenRouter, and the "Console" router) return a provider-side
+  // failure inside a 400 envelope. The request itself is valid, so the chain
+  // must try the next link instead of failing terminally. This is the exact
+  // shape from the 2026-08-18 incident (RCA / FC-018).
+  const a = await upstream(status(400, JSON.stringify({
+    error: {
+      type: 'server_error',
+      message: 'Error from provider (Console): Upstream request failed: [404] Provider returned error',
+    },
+  })));
+  const b = await upstream(ok('second'));
+  const chain = chainOf({ model: 'first', port: a.port }, { model: 'second', port: b.port });
+
+  const { link, attempts } = await dispatch(chain, new Cooldowns(50), askBody);
+
+  assert.equal(link.model, 'second', 'a wrapped upstream error must not end the chain');
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0].outcome, 'http-error');
+  a.close(); b.close();
+});
+
+test('the wrapped-error exception can be turned off for hard-fail behaviour', async () => {
+  // Operators can restore the strict "any 400 is fatal" behaviour by clearing
+  // advanceOnWrappedServerErrors, e.g. to debug an over-matching provider.
+  const a = await upstream(status(400, JSON.stringify({
+    error: { type: 'server_error', message: 'upstream request failed [502]' },
+  })));
+  const b = await upstream(ok('second'));
+  const chain = chainOf({ model: 'first', port: a.port }, { model: 'second', port: b.port });
+  chain.settings.advanceOnWrappedServerErrors = false;
+
+  await assert.rejects(
+    () => dispatch(chain, new Cooldowns(50), askBody),
+    (err) => {
+      assert.ok(err instanceof ChainError);
+      assert.equal(err.attempts.length, 1, 'the toggle-off path must stop at the first link');
+      return true;
+    }
+  );
+  a.close(); b.close();
 });
 
 test('a cooling link is demoted but still used as a last resort', async () => {

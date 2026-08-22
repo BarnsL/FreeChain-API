@@ -148,3 +148,78 @@ Observations captured during task-oriented work.
 **Suggested improvement:** Pair structural UI checks with one stateful browser review that expands a row across refresh, verifies pause behavior, reads the accessible tree, and captures both desktop and narrow viewports.
 
 **Principle:** An operational dashboard is only verified when its live state, accessible names, and constrained layout remain usable together.
+
+### Observation 10: Preserve multi-word CLI arguments on Windows
+
+**Status:** OPEN
+**Date:** 2026-08-19
+**Session context:** Provider integration discovery with GitNexus
+**Skill:** gitnexus-cli
+**Type:** open-source
+**Phase/Area:** Windows command invocation
+
+**Issue:** Passing a quoted multi-word value as a separate `--query` argument through a project runner that launches with a shell can lose the grouping and reach the CLI as several positional arguments. The documented quoted form then fails with a misleading too-many-arguments error.
+
+**Suggested improvement:** Document the Windows-safe equals form, such as `--query="provider routing"`, alongside the normal quoted form, and verify argument preservation in runner tests.
+
+**Principle:** A shell-backed cross-platform runner must test that spaces in option values survive every process boundary.
+
+### Observation 11: Define an observer anchor for pre-project work
+
+**Status:** OPEN
+**Date:** 2026-08-19
+**Session context:** Research and design for a new tool spanning several existing repositories
+**Skill:** task-observer
+**Type:** open-source
+**Phase/Area:** Session start protocol
+
+**Issue:** A substantive session began before its new project directory existed and touched several related repositories only for read-only discovery. The observer required an immediate workspace log but did not define whether to use the multi-project parent, a related dirty repository, or defer until the project anchor was chosen.
+
+**Suggested improvement:** Add an anchoring decision tree for pre-project and multi-repository work. Prefer an explicitly configured stable log, otherwise defer the first write until the target project is selected, and never create observer state in an unrelated dirty repository solely to satisfy session startup.
+
+**Principle:** Observability metadata needs an explicit ownership boundary before it writes into a shared or multi-project workspace.
+
+### Observation 12: Verify streamed protocol outcomes beyond HTTP status
+
+**Status:** OPEN
+**Date:** 2026-08-21
+**Session context:** Provider failover incident investigation
+**Skill:** verification-before-completion
+**Type:** open-source
+**Phase/Area:** Live provider verification
+
+**Issue:** A provider returned HTTP 200 and began an event stream, but its first meaningful event was an explicit upstream error. Header-only probes classified the route as successful even though the client received no usable completion and retried the same route.
+
+**Suggested improvement:** For streamed provider verification, consume a bounded first meaningful event and require either valid content, a tool-call delta, or a clean terminal event. Treat an error event, an empty early close, or a malformed first event as a failed route even when the HTTP status is 200.
+
+**Principle:** A successful transport handshake is not proof of a successful streamed application result.
+
+### Observation 13: Account-family expansion can defeat visible route ordering
+
+**Status:** OPEN
+**Date:** 2026-08-21
+**Session context:** Provider credential demotion without credential deletion
+**Skill:** systematic-debugging
+**Type:** open-source
+**Phase/Area:** Provider routing
+
+**Issue:** Moving a provider row to the bottom did not demote one bad credential because a bare provider-family link expanded every numbered account slot at each earlier occurrence. The visible chain order and the effective candidate order were different.
+
+**Suggested improvement:** When one credential must be retained but demoted, inspect candidate expansion before editing the chain. Pin healthy and unhealthy account slots explicitly, then test the effective provider-model tuples at the first and final positions.
+
+**Principle:** Route ordering is only reliable when tests assert the expanded candidate order, not just the visible link list.
+
+### Observation 14: Treat package and lockfile metadata as one release contract
+
+**Status:** OPEN
+**Date:** 2026-08-21
+**Session context:** FreeChain v0.6.0 release preparation
+**Skill:** verification-before-completion
+**Type:** open-source
+**Phase/Area:** Release metadata
+
+**Issue:** The package manifest had advanced while the lockfile root still reported an older version and omitted a newly exposed command. A source-only version check would have published internally inconsistent release metadata.
+
+**Suggested improvement:** Before tagging, validate the version and root command map in both the package manifest and lockfile. Regenerate the lockfile with lifecycle scripts disabled, then rerun tests and artifact inspection.
+
+**Principle:** Release metadata is a multi-file contract, not a single version field.

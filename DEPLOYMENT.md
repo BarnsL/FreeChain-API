@@ -150,18 +150,48 @@ For each incoming request, the server:
 1. **Expands** each chain link into candidates: one per (account slot, key) pair.
 2. **Sorts** candidates: non-cooling first, cooling last (demoted but not dropped).
 3. **Tries** each candidate via `fetch()` to the provider's `/chat/completions`.
-4. **On success**: returns the response, reports the serving provider in `X-Freechain-*` headers.
-5. **On retryable failure** (429, 5xx, network error): penalises the candidate with a cooldown, moves to the next.
-6. **On fatal failure** (400, 422): stops immediately. OmniRoute's diagnostic 400 for an exhausted internal pool is the one exception and advances the outer chain.
-7. **If all fail**: returns 502 with the list of attempts.
+4. **On non-streaming success**: returns the response and reports the serving provider in `X-Freechain-*` headers.
+5. **On streaming HTTP success**: reads a bounded first SSE event before accepting the candidate.
+6. **On retryable failure** (429, 5xx, network error, or early `stream-error`): penalises the candidate with a cooldown and moves to the next.
+7. **On fatal failure** (400, 422): stops immediately unless the body identifies a wrapped upstream or nested-router failure.
+8. **If all fail**: returns 502 with the list of attempts.
 
-### Default chain order (14 links)
+### Default chain order (34 links)
 
 | Priority | Provider | Models | Free? |
 |---|---|---|---|
-| 1-2 | OmniRoute (local) | auto/coding:free, auto/best-free | Yes (no key needed) |
-| 3-6 | OpenCode Zen | 4 free models | Yes |
-| 7-14 | OpenRouter | 8 free models | Yes |
+| 1 | OpenCode Zen #1 | Ox Alpha (`x-preview-f-free`) | Yes |
+| 2 | OpenRouter | Ox Alpha (`stealth/ox-alpha`) | Yes |
+| 3-33 | OpenRouter, OmniRoute, OpenCode Zen #1, NVIDIA, Google, Groq, Cerebras | Verified and existing free fallbacks | Yes |
+| 34 | OpenCode Zen #0 | Ox Alpha, retained failing credential pinned last | Yes, but currently unhealthy |
+
+The identifiers were reverified on 2026-08-21 against the official
+[OpenCode Zen catalog](https://opencode.ai/docs/zen/) and the
+[OpenRouter model catalog](https://openrouter.ai/api/v1/models). OpenCode exposes Ox Alpha Free as
+`x-preview-f-free`; OpenRouter exposes Ox Alpha as `stealth/ox-alpha`. Both routes were also
+validated with streamed required-tool calls before deployment.
+
+Every OpenCode link before the final row is pinned to account slot 1. A bare OpenCode family link
+would fan out across all configured slots and accidentally try the known failing slot near the top.
+The final slot remains configured by explicit owner request and is available only after every other
+link has been exhausted.
+
+### Streaming first-event gate
+
+An HTTP 200 status is not sufficient proof that an SSE completion started successfully. Routers can
+return 200 and place an upstream provider error in the first data event. `dispatch()` therefore owns
+the response until it sees the first complete, meaningful SSE event:
+
+1. Buffer at most 64 KiB, including comment or keepalive events.
+2. Parse `data:` lines without re-encoding the raw bytes.
+3. Reject an explicit error event, top-level JSON `error`, malformed first data event, empty close,
+   `[DONE]` before content, read failure, or exceeded prefix ceiling.
+4. Record `stream-error`, cool that candidate, and continue through normal failover.
+5. For a valid event, replay every buffered byte exactly and continue from the same upstream reader.
+
+After the first valid event reaches the client, FreeChain cannot retry a later stream failure without
+risking duplicated text or tool calls. The client receives that later failure or truncation. This is
+the intentional boundary between reliable early failover and genuine streaming.
 
 ## Credential System
 
@@ -278,9 +308,10 @@ State is refetched from `/admin/state` after every mutation and on a 10-second p
 3. Authentication rejects are recorded before body parsing with
    `inputSummary: unavailable-before-auth`. Authenticated chat bodies are reduced immediately to
    model, streaming, role/count, character, tool-count, and max-token metadata.
-4. `dispatch()` remains the routing authority. The server copies only provider/model/key ordinal,
-   outcome, and latency from each attempt. Attempt detail and provider bodies are dropped by the
-   journal allowlist.
+4. `dispatch()` remains the routing authority. It classifies an early HTTP 200 SSE failure as
+   `stream-error` before accepting a route. The server copies only provider/model/key ordinal,
+   outcome, status, and latency from each attempt. Attempt detail and provider bodies are dropped by
+   the journal allowlist.
 5. JSON replies are summarized after receipt. SSE chunks are counted as they pass through and only
    a partial line buffer is held. Exact provider usage wins; otherwise input/output characters are
    converted to a clearly labelled four-character estimate.
@@ -311,12 +342,121 @@ status cards or cooling guidance:
    the semantic hooks, grid declaration, legend groups, and the existence of this handoff section;
    browser verification remains necessary for final layout confirmation.
 
+### Opt-in retention
+
+The journal stores metadata by default: who called, which provider answered,
+how long it took, how many tokens. None of the traffic itself is written. A
+host debugging their own router can change that on **Chat → Settings → Log
+policy**, one switch at a time:
+
+| Switch | What it writes |
+|---|---|
+| `promptSummary` | The newest few messages, truncated, with URLs, paths, emails and key-shaped strings stripped |
+| `rawPrompts` | `messages` verbatim, unredacted |
+| `rawResponses` | Model output verbatim, streaming included |
+| `rawToolBodies` | `tools` and `tool_choice` verbatim |
+| `credentials` | The bearer token each caller presented, in clear text |
+
+Four properties hold regardless of how the switches are set:
+
+1. **Fail closed.** Every switch requires an explicit `true`. A missing policy,
+   an empty policy, or a truthy-but-not-`true` value all capture nothing —
+   `summarizeInput(body)` with no policy is metadata-only.
+2. **The cap is not negotiable.** Policy decides whether a field is captured,
+   never how large it may grow. `RAW_HARD_CAP` (64k characters) is applied on
+   persist whatever `maxRawChars` asked for, and truncation is marked in the
+   stored value rather than done silently, so the journal's 5 MiB rotation
+   budget cannot be consumed by one enormous request.
+3. **The model cannot turn these on.** `set_log_policy` is an allowlisted
+   operator action, but `stripHumanOnlyLogFlags()` removes the four content
+   switches from anything the model proposes. Enabling them requires a human on
+   the Settings tab. The system prompt says the same thing; this is the part
+   that enforces it.
+4. **The Logs page states the policy in force.** Its retention callout ships
+   hidden and empty, and `renderRetentionNotice()` fills it from the live
+   settings only while something is actually being retained. There is no static
+   "never stored" sentence to become a lie: the page is silent when nothing is
+   captured and amber when something is, which is the only arrangement that
+   stays true at the moment it matters.
+
+#### On `credentials`
+
+This one is different in kind, and worth being blunt about. It writes working
+bearer tokens to `logs/requests.jsonl` in clear text. Anyone who can read that
+file — a backup, a screen share, a stray `git add -f` — has working keys, and
+recovering means rotating every provider key in the chain.
+
+It answers exactly one question well: *what did this app actually send?*, when
+a key is being rejected and the caller's config is not visible. `keyIndex` on
+each attempt already tells you which stored key was used, so for anything else
+you almost certainly do not need this. Turn it on, reproduce the failure, turn
+it off, then clear the journal from the operator.
+
+### Chat page
+
+The operator surface is a page inside the dashboard (`#page-chat`, nav key
+`chat`, directly after Logs), not a separate document. It previously shipped as
+a standalone `/operator.html` with its own stylesheet; that drifted visually
+from the dashboard immediately, so the page, its markup and its styles now live
+in `index.html`, `app.css` and `operator.js` alongside everything else.
+
+`src/webui/operator.js` is kept deliberately in step with SubChain's file of the
+same name — the two dashboards present the same surface, so a fix to one belongs
+in the other. Every id on the page is namespaced `op*` to stay clear of the
+dashboard's own ids, and the whole page is loaded lazily on first visit so it
+costs nothing until opened.
+
+Guarantees the page must keep:
+
+- all `/admin/operator/*` routes are loopback-only and reject cross-site
+  mutations;
+- the model receives sanitized status only — never provider keys, prompts, or
+  responses;
+- a model proposal is inert. It becomes a pending action from a fixed allowlist,
+  and only an explicit confirm request reaches the executor;
+- prompt-summary retention is opt-in, exposed on the Settings tab.
+
+### Text containment
+
+Shared rule with the other two chain dashboards: no string may overflow its card, and the page
+itself never scrolls sideways. `src/webui/app.css` ends with a zero-specificity `:where()` block
+that gives every card-like container `min-width: 0` and `overflow-wrap: anywhere`, and pushes
+anything genuinely unwrappable (`<pre>`, tables) into its own horizontal scroll box.
+
+It is structural rather than per-component on purpose. Provider ids, model names, base URLs, request
+ids, key chips and raw upstream error text are all lengths this project does not control, so fixing
+one card only moves the bug to the next card someone adds. Writing the block with `:where()` keeps
+its specificity at zero, so deliberate widths set elsewhere still win.
+
+Change it in FreeChain, SubChain and VisionChain together, and verify at 1280px and at 380px.
+
+### Grids size on the container, not the viewport
+
+A card grid must be `repeat(auto-fit, minmax(<real minimum>, 1fr))`, never a fixed column count
+with a media query as its escape hatch.
+
+The failure this prevents is not hypothetical. The Logs summary was `repeat(4, minmax(0, 1fr))`
+relaxed to two columns below an 880px viewport. At a 960px window the 248px sidebar is still
+present, so the content column is only ~620px: above the breakpoint, but four tiles wide. Each
+tile got 105px of usable width for a 95px label, and the filter row — a fixed five columns —
+clipped its placeholders to "chain or provide". The viewport was never the constraint; the
+container was, and a viewport media query cannot see it.
+
+`minmax(0, ...)` is the specific trap. It permits a track to shrink to nothing, which is right for
+a scroll container and wrong for anything holding text. Give every text-bearing track a minimum it
+can actually be read at.
+
+Verify by narrowing the window with the sidebar visible, not by narrowing past the breakpoint —
+the bug lives between those two states.
+
+
 ### Cooling error classifications
 
-`src/chain.js` treats HTTP 400 and 422 as fatal caller-request failures, so it stops the chain and
-does not add a cooldown. OmniRoute's documented diagnostic 400 for an exhausted nested pool is the
-only exception. Every other HTTP status, plus timeouts and network errors, belongs to the individual
-candidate: FreeChain records it in the cooling snapshot, temporarily demotes that candidate, and
+`src/chain.js` treats a genuine HTTP 400 or 422 caller-request failure as fatal, so it stops the chain
+and does not add a cooldown. A nested router can wrap a server-side failure in one of those statuses;
+specific upstream-error markers and OmniRoute's diagnostic pool envelope advance instead. Every
+other HTTP status, timeout, network error, and early `stream-error` belongs to the individual
+candidate. FreeChain records it in the cooling snapshot, temporarily demotes that candidate, and
 continues to the next candidate. HTTP 429 may use a provider `Retry-After` value, capped at five
 minutes; other cooldowns use `chain.config.json`'s `cooldownMs`.
 
@@ -424,19 +564,25 @@ manager is required for that recovery.
 node --test "test/*.test.js"
 ```
 
-Three test files, all using Node's built-in test runner against real local HTTP servers:
+Thirteen test files use Node's built-in test runner. Provider and server integration tests use real
+local HTTP servers; deterministic stream-boundary tests use controlled Web Streams. The current
+suite contains 109 tests, with one expected Windows permission skip.
 
-- **chain.test.js** (11 tests): failover walk, rate-limit advance, fatal stop, OmniRoute
-  diagnostic fallback, cooling
-  demotion, model pinning, streaming pass-through, server routes.
-- **keys.test.js** (14 tests): all env var forms, slot isolation, vendor fallback, fan-out
-  ordering, candidate expansion, cross-slot rotation.
-- **admin.test.js** (10 tests): .env round-tripping, key masking, access key gating,
-  constant-time compare, path traversal, dashboard on/off.
-- **cli.test.js** (1 test): no-UI startup generates and requires the access key.
-- **deep-health.test.js** (4 tests): explicit probe redaction, rate limit, access control,
-  and client-disconnect cancellation.
-- **supervisor.test.js** (2 tests): bounded restart delay, worker recovery, and clean stop.
+- **admin.test.js** (23 tests): environment-file round-tripping, key masking, access-key gating,
+  settings persistence, path traversal, dashboard serving, and shortcut boundaries.
+- **chain.test.js** (18 tests): failover, fatal stops, wrapped errors, cooling, model pinning,
+  streamed first-event gating, exact replay, oversized chunks, aborts, and server routes.
+- **cli.test.js** (2 tests): help controls and no-UI access-key startup.
+- **deep-health.test.js** (4 tests): probe redaction, rate limiting, access control, and disconnect cancellation.
+- **default-chain.test.js** (1 test): the shipped chain contains no paid fallback.
+- **guide.test.js** (7 tests): chapter coverage, navigation, source attribution, deep links, and generated-doc sync.
+- **harness.test.js** (9 tests): Harness persistence, activation, composition, metadata, and live request application.
+- **keys.test.js** (20 tests): variable forms, slot isolation, vendor fallback, fan-out ordering, and candidate rotation.
+- **operator-control-plane.test.js** (3 tests): inert proposals, failover diagnosis, and raw-retention protection.
+- **request-journal.test.js** (9 tests): summaries, sanitization, persistence, rotation, and opt-in raw capture.
+- **request-logging.test.js** (4 tests): authentication, usage, streaming failover, CORS, and metadata-only audits.
+- **source-integrity.test.js** (6 tests): control bytes and dashboard structure contracts.
+- **supervisor.test.js** (3 tests): bounded restart delay, worker recovery, and clean stop.
 
 ## Provider Families
 

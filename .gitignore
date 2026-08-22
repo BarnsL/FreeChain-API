@@ -36,3 +36,6 @@ desktop.ini
 .serena/
 CLAUDE.md
 AGENTS.md
+
+.freechain-operator.json
+.chain-operator-backups/

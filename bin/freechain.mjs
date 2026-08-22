@@ -106,7 +106,7 @@ function startWorker() {
   const accessKey = ensureAccessKey();
   const journal = new RequestJournal({ filePath: logPath, enabled: persistJournal });
 
-  createServer(chain, { verbose: has('--verbose'), ui, journal }).listen(port, host, () => {
+  createServer(chain, { verbose: has('--verbose'), ui, journal, configFile: chainFile }).listen(port, host, () => {
     const withKeys = status.filter((l) => l.keyCount > 0);
     console.log(`freechain    http://${host}:${port}/v1`);
     if (ui) console.log(`dashboard    http://${host}:${port}/`);
