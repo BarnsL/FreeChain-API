@@ -288,7 +288,7 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 - **Verification**: The regression test covers an orphan tool call. Live FreeChain model
   `auto/coding:free` reproduced the condition and displayed the new Failed/error recovery state.
 
-### FC-017: Keep desktop log controls inside each record card
+### FC-018: Keep desktop log controls inside each record card
 - **Status**: DONE
 - **Priority**: P1
 - **Type**: Bug
@@ -301,7 +301,7 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
   card-containment block was also restored to the byte-identical union selector list.
 - **Verification**: The previously failing installed dashboard check now reports 170 cards, zero
   spills, and no page overflow at 1280 px with a 121-character request-session id. FreeChain's 109
-  tests, SubChain's 146 tests, and VisionChain's 36 tests plus config check all pass. The unchanged
+  tests, SubChain's 124 tests, and VisionChain's 28 tests plus config check all pass. The unchanged
   380 px mobile rule retains the hostile-string proof captured before this desktop-only change.
 
 ---
