@@ -14,6 +14,7 @@ import {
   saveSlotKeys,
   testSlot,
   reorderChain,
+  updateChainSettings,
   getAccessKey,
   rotateAccessKey,
   accessKeyMatches,
@@ -65,6 +66,7 @@ function adminAuditFor(method, pathname) {
     ['POST /admin/keys', ['provider-keys-updated', 'provider-slot']],
     ['POST /admin/test', ['provider-tested', 'provider-slot']],
     ['POST /admin/chain/reorder', ['chain-reordered', 'chain']],
+    ['POST /admin/chain/settings', ['failover-settings-updated', 'chain']],
     ['POST /admin/harnesses', ['harness-created', 'harness']],
     ['POST /admin/harness/preset', ['harness-preset-applied', 'harness']],
     ['POST /admin/harnesses/active', ['harness-activated', 'harness']],
@@ -374,6 +376,7 @@ export function createServer(chain, {
               return { harnesses: library.harnesses, activeHarnessId: library.activeId };
             })(),
             accessKeyMasked: getAccessKey() ? '••••••••' : null,
+            settings: chain.settings,
             cooling: cooldowns.snapshot(),
             journal: journal.status(),
             stats: { ...stats, uptimeSeconds: Math.round((Date.now() - stats.startedAt) / 1000) },
@@ -407,6 +410,18 @@ export function createServer(chain, {
           journalRecord.audit.count = order.length;
           reorderChain(chain, order);
           return json(res, 200, { ok: true, count: chain.links.length });
+        }
+        // Tune the failover behaviour (timeout, cooldown, candidate cap, and
+        // whether wrapped upstream errors advance the chain) from the Chain
+        // page. Persisted to chain.config.json and applied live — the running
+        // Cooldowns predates this request, so its window is re-synced here so a
+        // change takes effect on the very next attempt without a restart.
+        if (url.pathname === '/admin/chain/settings' && req.method === 'POST') {
+          const patch = await readJson(req);
+          const settings = updateChainSettings(chain, patch, configFile);
+          cooldowns.cooldownMs = settings.cooldownMs;
+          journalRecord.audit.count = Object.keys(patch || {}).length;
+          return json(res, 200, { settings });
         }
         // ── Harness ───────────────────────────────────────────────
         //
@@ -576,7 +591,7 @@ ${preset.content}` : preset.content;
         journalRecord.error = { code: 'invalid_request', category: 'request', httpStatus: err.statusCode || 400, retryable: false };
         return fail(res, err.statusCode || 400, err.message, {}, { cors: true });
       }
-      // Apply the Default Harness before anything reads the body: the
+      // Apply the active Harness before anything reads the body: the
       // journal, the dispatcher and the provider must all see the same
       // composed request, not the raw one the client sent.
       const harness = activeHarness(loadHarnessLibrary(harnessFile));

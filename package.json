@@ -1,6 +1,6 @@
 {
   "name": "freechain",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "OpenAI-compatible failover router over a chain of free and paid model providers",
   "type": "module",
   "bin": {
@@ -14,7 +14,8 @@
     "start": "node bin/freechain.mjs",
     "test": "node --test \"test/*.test.js\"",
     "import-presets": "node bin/import-presets.mjs",
-    "build": "node scripts/build-release.mjs"
+    "build": "node scripts/build-release.mjs",
+    "build-guide-docs": "node scripts/build-guide-docs.mjs"
   },
   "engines": {
     "node": ">=20"

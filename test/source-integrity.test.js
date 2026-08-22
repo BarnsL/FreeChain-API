@@ -160,8 +160,13 @@ test('Harness sits between Chain and Logs and carries the shared component vocab
   );
   assert.match(
     html,
-    /data-page="harness"[\s\S]*?<\/button>\s*<button class="nav-item" data-page="logs"/,
-    'Logs must be the navigation item directly after Harness',
+    /data-page="harness"[\s\S]*?<\/button>\s*<button class="nav-item" data-page="guide"/,
+    'Guide must be the navigation item directly after Harness',
+  );
+  assert.match(
+    html,
+    /data-page="guide"[\s\S]*?<\/button>\s*<button class="nav-item" data-page="logs"/,
+    'Logs must be the navigation item directly after Guide',
   );
   assert.match(html, /<section class="page" id="page-harness">/);
   assert.match(html, /id="harnessConfig"/);

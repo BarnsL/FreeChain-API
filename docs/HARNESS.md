@@ -6,6 +6,13 @@ FreeChain composes every request with exactly one of them.
 Harnesses are edited on the **Harness** page of the dashboard. Changes save
 automatically against the Harness you are editing.
 
+This document is the component reference. Two companions sit beside it:
+
+- [harness/README.md](harness/README.md) walks through using the page.
+- [harness/enforcement-boundaries.md](harness/enforcement-boundaries.md) states,
+  field by field, what FreeChain enforces and what it only prompts for. Read it
+  before treating Safety policy or Tool policy as a control.
+
 ## How the active Harness is chosen
 
 FreeChain authenticates every caller with a single access key, so there is

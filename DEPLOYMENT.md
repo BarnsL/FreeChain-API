@@ -150,18 +150,48 @@ For each incoming request, the server:
 1. **Expands** each chain link into candidates: one per (account slot, key) pair.
 2. **Sorts** candidates: non-cooling first, cooling last (demoted but not dropped).
 3. **Tries** each candidate via `fetch()` to the provider's `/chat/completions`.
-4. **On success**: returns the response, reports the serving provider in `X-Freechain-*` headers.
-5. **On retryable failure** (429, 5xx, network error): penalises the candidate with a cooldown, moves to the next.
-6. **On fatal failure** (400, 422): stops immediately. OmniRoute's diagnostic 400 for an exhausted internal pool is the one exception and advances the outer chain.
-7. **If all fail**: returns 502 with the list of attempts.
+4. **On non-streaming success**: returns the response and reports the serving provider in `X-Freechain-*` headers.
+5. **On streaming HTTP success**: reads a bounded first SSE event before accepting the candidate.
+6. **On retryable failure** (429, 5xx, network error, or early `stream-error`): penalises the candidate with a cooldown and moves to the next.
+7. **On fatal failure** (400, 422): stops immediately unless the body identifies a wrapped upstream or nested-router failure.
+8. **If all fail**: returns 502 with the list of attempts.
 
-### Default chain order (14 links)
+### Default chain order (34 links)
 
 | Priority | Provider | Models | Free? |
 |---|---|---|---|
-| 1-2 | OmniRoute (local) | auto/coding:free, auto/best-free | Yes (no key needed) |
-| 3-6 | OpenCode Zen | 4 free models | Yes |
-| 7-14 | OpenRouter | 8 free models | Yes |
+| 1 | OpenCode Zen #1 | Ox Alpha (`x-preview-f-free`) | Yes |
+| 2 | OpenRouter | Ox Alpha (`stealth/ox-alpha`) | Yes |
+| 3-33 | OpenRouter, OmniRoute, OpenCode Zen #1, NVIDIA, Google, Groq, Cerebras | Verified and existing free fallbacks | Yes |
+| 34 | OpenCode Zen #0 | Ox Alpha, retained failing credential pinned last | Yes, but currently unhealthy |
+
+The identifiers were reverified on 2026-08-21 against the official
+[OpenCode Zen catalog](https://opencode.ai/docs/zen/) and the
+[OpenRouter model catalog](https://openrouter.ai/api/v1/models). OpenCode exposes Ox Alpha Free as
+`x-preview-f-free`; OpenRouter exposes Ox Alpha as `stealth/ox-alpha`. Both routes were also
+validated with streamed required-tool calls before deployment.
+
+Every OpenCode link before the final row is pinned to account slot 1. A bare OpenCode family link
+would fan out across all configured slots and accidentally try the known failing slot near the top.
+The final slot remains configured by explicit owner request and is available only after every other
+link has been exhausted.
+
+### Streaming first-event gate
+
+An HTTP 200 status is not sufficient proof that an SSE completion started successfully. Routers can
+return 200 and place an upstream provider error in the first data event. `dispatch()` therefore owns
+the response until it sees the first complete, meaningful SSE event:
+
+1. Buffer at most 64 KiB, including comment or keepalive events.
+2. Parse `data:` lines without re-encoding the raw bytes.
+3. Reject an explicit error event, top-level JSON `error`, malformed first data event, empty close,
+   `[DONE]` before content, read failure, or exceeded prefix ceiling.
+4. Record `stream-error`, cool that candidate, and continue through normal failover.
+5. For a valid event, replay every buffered byte exactly and continue from the same upstream reader.
+
+After the first valid event reaches the client, FreeChain cannot retry a later stream failure without
+risking duplicated text or tool calls. The client receives that later failure or truncation. This is
+the intentional boundary between reliable early failover and genuine streaming.
 
 ## Credential System
 
@@ -278,9 +308,10 @@ State is refetched from `/admin/state` after every mutation and on a 10-second p
 3. Authentication rejects are recorded before body parsing with
    `inputSummary: unavailable-before-auth`. Authenticated chat bodies are reduced immediately to
    model, streaming, role/count, character, tool-count, and max-token metadata.
-4. `dispatch()` remains the routing authority. The server copies only provider/model/key ordinal,
-   outcome, and latency from each attempt. Attempt detail and provider bodies are dropped by the
-   journal allowlist.
+4. `dispatch()` remains the routing authority. It classifies an early HTTP 200 SSE failure as
+   `stream-error` before accepting a route. The server copies only provider/model/key ordinal,
+   outcome, status, and latency from each attempt. Attempt detail and provider bodies are dropped by
+   the journal allowlist.
 5. JSON replies are summarized after receipt. SSE chunks are counted as they pass through and only
    a partial line buffer is held. Exact provider usage wins; otherwise input/output characters are
    converted to a clearly labelled four-character estimate.
@@ -421,10 +452,11 @@ the bug lives between those two states.
 
 ### Cooling error classifications
 
-`src/chain.js` treats HTTP 400 and 422 as fatal caller-request failures, so it stops the chain and
-does not add a cooldown. OmniRoute's documented diagnostic 400 for an exhausted nested pool is the
-only exception. Every other HTTP status, plus timeouts and network errors, belongs to the individual
-candidate: FreeChain records it in the cooling snapshot, temporarily demotes that candidate, and
+`src/chain.js` treats a genuine HTTP 400 or 422 caller-request failure as fatal, so it stops the chain
+and does not add a cooldown. A nested router can wrap a server-side failure in one of those statuses;
+specific upstream-error markers and OmniRoute's diagnostic pool envelope advance instead. Every
+other HTTP status, timeout, network error, and early `stream-error` belongs to the individual
+candidate. FreeChain records it in the cooling snapshot, temporarily demotes that candidate, and
 continues to the next candidate. HTTP 429 may use a provider `Retry-After` value, capped at five
 minutes; other cooldowns use `chain.config.json`'s `cooldownMs`.
 
@@ -532,19 +564,25 @@ manager is required for that recovery.
 node --test "test/*.test.js"
 ```
 
-Three test files, all using Node's built-in test runner against real local HTTP servers:
+Thirteen test files use Node's built-in test runner. Provider and server integration tests use real
+local HTTP servers; deterministic stream-boundary tests use controlled Web Streams. The current
+suite contains 109 tests, with one expected Windows permission skip.
 
-- **chain.test.js** (11 tests): failover walk, rate-limit advance, fatal stop, OmniRoute
-  diagnostic fallback, cooling
-  demotion, model pinning, streaming pass-through, server routes.
-- **keys.test.js** (14 tests): all env var forms, slot isolation, vendor fallback, fan-out
-  ordering, candidate expansion, cross-slot rotation.
-- **admin.test.js** (10 tests): .env round-tripping, key masking, access key gating,
-  constant-time compare, path traversal, dashboard on/off.
-- **cli.test.js** (1 test): no-UI startup generates and requires the access key.
-- **deep-health.test.js** (4 tests): explicit probe redaction, rate limit, access control,
-  and client-disconnect cancellation.
-- **supervisor.test.js** (2 tests): bounded restart delay, worker recovery, and clean stop.
+- **admin.test.js** (23 tests): environment-file round-tripping, key masking, access-key gating,
+  settings persistence, path traversal, dashboard serving, and shortcut boundaries.
+- **chain.test.js** (18 tests): failover, fatal stops, wrapped errors, cooling, model pinning,
+  streamed first-event gating, exact replay, oversized chunks, aborts, and server routes.
+- **cli.test.js** (2 tests): help controls and no-UI access-key startup.
+- **deep-health.test.js** (4 tests): probe redaction, rate limiting, access control, and disconnect cancellation.
+- **default-chain.test.js** (1 test): the shipped chain contains no paid fallback.
+- **guide.test.js** (7 tests): chapter coverage, navigation, source attribution, deep links, and generated-doc sync.
+- **harness.test.js** (9 tests): Harness persistence, activation, composition, metadata, and live request application.
+- **keys.test.js** (20 tests): variable forms, slot isolation, vendor fallback, fan-out ordering, and candidate rotation.
+- **operator-control-plane.test.js** (3 tests): inert proposals, failover diagnosis, and raw-retention protection.
+- **request-journal.test.js** (9 tests): summaries, sanitization, persistence, rotation, and opt-in raw capture.
+- **request-logging.test.js** (4 tests): authentication, usage, streaming failover, CORS, and metadata-only audits.
+- **source-integrity.test.js** (6 tests): control bytes and dashboard structure contracts.
+- **supervisor.test.js** (3 tests): bounded restart delay, worker recovery, and clean stop.
 
 ## Provider Families
 

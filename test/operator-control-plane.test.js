@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ChainOperatorRuntime, operatorSystemPrompt } from '../src/operator-runtime.js';
-import { stripHumanOnlyLogFlags, HUMAN_ONLY_LOG_FLAGS } from '../src/operator-freechain.js';
+import { stripHumanOnlyLogFlags, HUMAN_ONLY_LOG_FLAGS, failoverDoctor } from '../src/operator-freechain.js';
 
 test('operator model proposals are inert until a separate confirmation', async () => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'freechain-operator-')); let applied=0;
@@ -15,6 +15,32 @@ test('operator model proposals are inert until a separate confirmation', async (
     await runtime.confirm(reply.pending[0].id); assert.equal(applied,1);
     await assert.rejects(()=>runtime.confirm(reply.pending[0].id));
   } finally { fs.rmSync(root,{recursive:true,force:true}); }
+});
+
+test('the failover doctor lets the chat RCA a chain-exhaustion incident', () => {
+  const settings = { requestTimeoutMs: 90000, cooldownMs: 60000, maxAttempts: null, advanceOnWrappedServerErrors: true };
+
+  // Clean history: nothing exhausted the chain.
+  const healthy = failoverDoctor({ settings }, [{ status: 200, outcome: 'served' }]);
+  assert.equal(healthy.id, 'failover');
+  assert.equal(healthy.status, 'ok');
+  assert.equal(healthy.settings.advanceOnWrappedServerErrors, true);
+
+  // The 2026-08-18 shape: a 502 whose head attempt was a fatal 400 must be
+  // surfaced with the head-link recommendation so the chat can act on it.
+  const incident = failoverDoctor({ settings }, [
+    { status: 502, error: { code: 'chain_failed' }, attempts: [{ outcome: 'fatal', providerStatus: 400 }] },
+    { status: 200, outcome: 'served' },
+  ]);
+  assert.equal(incident.status, 'warn');
+  assert.match(incident.message, /exhausted the chain/);
+  assert.match(incident.recommendation, /head/i);
+
+  // Turning the exception off is itself a flagged risk, regardless of history.
+  const disabled = failoverDoctor({ settings: { ...settings, advanceOnWrappedServerErrors: false } }, []);
+  assert.equal(disabled.status, 'warn');
+  assert.match(disabled.message, /OFF/);
+  assert.equal(disabled.settings.advanceOnWrappedServerErrors, false);
 });
 
 test('the operator model cannot enable raw retention, even through a confirmed action', () => {

@@ -809,3 +809,79 @@ pre .c { color: #5b626d; }
 .op-check span { line-height: 1.5; }
 .op-danger { margin: 14px 0; align-items: flex-start; }
 .op-danger .op-check { margin: 0 0 6px; }
+
+/* ── Guide ───────────────────────────────────────────────────────────── */
+/* Reuses the Harness section grammar (.harness-toggle/.harness-body) so the
+   collapsible chapters match the Harness page exactly. Everything here is
+   token-based, so the operator light theme carries through untouched. */
+.guide-source {
+  border-left: 3px solid var(--primary);
+  margin-bottom: 20px;
+}
+.guide-source h2 { font-size: 14px; margin-bottom: 6px; }
+.guide-source p { color: var(--muted-foreground); font-size: 13px; margin-bottom: 12px; max-width: 68ch; }
+.guide-entries {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin: 8px 0 28px;
+}
+.guide-entry {
+  text-align: left; cursor: pointer; font: inherit; color: var(--foreground);
+  transition: background 0.15s, border-color 0.15s;
+}
+.guide-entry:hover { background: var(--card-hover); border-color: var(--primary); }
+.guide-entry .stat-sub { margin-top: 6px; line-height: 1.5; }
+.guide-heading { font-size: 18px; margin: 32px 0 6px; }
+.guide-note, .guide-summary { color: var(--muted-foreground); font-size: 13px; }
+.guide-note { margin-bottom: 14px; }
+.guide-chapter .harness-toggle h3 { display: flex; align-items: center; gap: 10px; }
+.guide-number {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  background: var(--primary-soft); color: #8ba0ff;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.guide-chapter-body h4 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted-foreground); margin: 16px 0 6px;
+}
+.guide-chapter-body h4:first-of-type { margin-top: 10px; }
+.guide-chapter-body > p { font-size: 13.5px; line-height: 1.65; margin-bottom: 4px; }
+.guide-summary { margin-bottom: 10px; font-style: italic; }
+.guide-list { margin: 0 0 4px; padding-left: 20px; }
+.guide-list li { font-size: 13.5px; line-height: 1.6; margin-bottom: 3px; }
+.guide-diagram, .guide-example {
+  background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; margin: 4px 0 4px; overflow-x: auto;
+  font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.55;
+  color: var(--foreground); white-space: pre;
+}
+.guide-example { font-size: 12px; }
+.guide-version {
+  display: inline-block; font-size: 11.5px; color: var(--muted-foreground);
+  background: var(--muted); border: 1px solid var(--border); border-radius: 999px;
+  padding: 2px 10px; margin-bottom: 6px;
+}
+.guide-legacy {
+  border-left: 3px solid var(--warning); background: rgba(224, 163, 62, 0.08);
+  padding: 10px 14px; border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 13px; line-height: 1.6; margin: 10px 0;
+}
+.guide-enforcement { flex-shrink: 0; }
+.guide-enforcement-gateway { background: rgba(63, 191, 127, 0.12); color: var(--success); border-color: rgba(63, 191, 127, 0.25); }
+.guide-enforcement-prompted { background: var(--primary-soft); color: #8ba0ff; border-color: rgba(77, 107, 254, 0.25); }
+.guide-enforcement-runtime { background: rgba(224, 163, 62, 0.12); color: var(--warning); border-color: rgba(224, 163, 62, 0.25); }
+.guide-enforcement-client { background: var(--muted); color: var(--muted-foreground); }
+.guide-enforcement-unavailable { background: var(--muted); color: var(--muted-foreground); text-decoration: line-through; }
+.guide-sources-note { margin-top: 12px; }
+.guide-sources-note p { font-size: 13px; color: var(--muted-foreground); line-height: 1.6; }
+.guide-sources-note p + p { margin-top: 8px; }
+/* The Harness field's guide deep-link, styled like its Browse presets button. */
+.harness-guide-link {
+  background: none; border: 0; padding: 0; margin-left: 8px;
+  color: var(--primary); font: inherit; font-size: 12px; cursor: pointer;
+}
+.harness-guide-link:hover { text-decoration: underline; }
+@media (max-width: 720px) {
+  .guide-entries { grid-template-columns: 1fr; }
+}

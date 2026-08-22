@@ -119,6 +119,32 @@ export function saveChainConfig(chain, file = DEFAULT_CHAIN) {
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
 }
 
+// The failover knobs the dashboard is allowed to tune at runtime. Everything
+// else in chain.config.json (the chain array, per-link base URLs) stays
+// file-only, so a settings POST can never rewrite the routing table.
+export const TUNABLE_SETTINGS = [
+  'requestTimeoutMs',
+  'cooldownMs',
+  'maxAttempts',
+  'advanceOnWrappedServerErrors',
+];
+
+/**
+ * Persist the failover tuning settings back to `chain.config.json`, leaving the
+ * `chain` array and every unrelated field untouched. Only the known
+ * `TUNABLE_SETTINGS` keys are written, so a malformed patch cannot inject
+ * arbitrary top-level JSON. Callers validate ranges first (see
+ * `updateChainSettings` in admin.js).
+ */
+export function saveChainSettings(settings, file = DEFAULT_CHAIN) {
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const key of TUNABLE_SETTINGS) {
+    if (settings[key] !== undefined) raw[key] = settings[key];
+  }
+  fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+  return settings;
+}
+
 /**
  * Load and validate `chain.config.json` into the in-memory shape the rest of
  * the app works with: each link resolved against its provider definition
@@ -151,6 +177,10 @@ export function loadChain(file = DEFAULT_CHAIN) {
       requestTimeoutMs: parsed.requestTimeoutMs ?? 90_000,
       cooldownMs: parsed.cooldownMs ?? 60_000,
       maxAttempts: parsed.maxAttempts ?? null, // null = every configured candidate
+      // Advance the chain when a provider wraps a server-side failure in a
+      // 400/422 body (see wrapsRetryableUpstreamError in chain.js). On by
+      // default; the dashboard's Failover tuning card exposes the switch.
+      advanceOnWrappedServerErrors: parsed.advanceOnWrappedServerErrors ?? true,
       ...parsed.settings,
     },
   };

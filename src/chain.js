@@ -70,14 +70,42 @@ export class Cooldowns {
 // caller, so move on.
 const FATAL_STATUS = new Set([400, 422]);
 
-// OmniRoute uses a 400 wrapper when its own candidate pool is exhausted. The
-// request is valid, so let the outer FreeChain chain try its next provider.
-// A normal OmniRoute 400 remains fatal; only its diagnostic pool envelope gets
-// this treatment.
-const isOmniRoutePoolFailure = (link, status, detail) =>
-  link.provider === 'omniroute' &&
-  status === 400 &&
-  /"diagnostics"\s*:\s*\{/.test(detail);
+// A 4xx from an aggregator is ambiguous: the same status code covers two very
+// different failures.
+//   * A genuine caller error — bad model id, malformed messages, an
+//     unsupported parameter — that every provider would reject identically.
+//     Advancing burns all 30-odd candidates on an error none can fix, so it
+//     must stay fatal.
+//   * A server-side or upstream failure the aggregator wrapped in a 4xx body.
+//     OpenRouter returns `{"error":{"type":"server_error",...}}` with HTTP 400;
+//     the "Console" router answers "Upstream request failed: [404] Provider
+//     returned error" with a 400; OmniRoute wraps pool exhaustion the same way.
+//     The request is valid, so the chain should advance to the next provider.
+//
+// Keying the fatal/retryable decision on the status code alone treated the
+// second kind as the first, so one flaky provider at the head of the chain took
+// the entire failover down (RCA 2026-08-18 / FC-018). We inspect the body, not
+// just the status, to tell them apart. Markers are deliberately specific to
+// server/upstream failures so genuine validation errors keep failing fast.
+const WRAPPED_SERVER_ERROR =
+  /server[_ ]error|upstream (?:error|request failed)|provider returned error|no (?:endpoints|allowed providers|instances)|temporarily unavailable|over(?:loaded|capacity)|internal server error|bad gateway|gateway time-?out|service unavailable|\[(?:404|408|409|425|429|5\d\d)\]/i;
+
+/**
+ * Whether a fatal-status (400/422) body is actually a wrapped, retryable
+ * upstream failure rather than a genuine caller error, so `dispatch()` advances
+ * the chain instead of failing terminally.
+ *
+ * OmniRoute's diagnostic pool envelope always advances (the original known
+ * case, kept for behaviour parity). Everything else is gated on
+ * `settings.advanceOnWrappedServerErrors` (default on): clearing it restores
+ * the strict "any 400 is fatal" behaviour for operators debugging an
+ * over-matching provider.
+ */
+export function wrapsRetryableUpstreamError(link, status, detail, settings = {}) {
+  if (link.provider === 'omniroute' && /"diagnostics"\s*:\s*\{/.test(detail)) return true;
+  if (settings.advanceOnWrappedServerErrors === false) return false;
+  return WRAPPED_SERVER_ERROR.test(detail);
+}
 
 /** Parse a `Retry-After` header (seconds or an HTTP date) into a millisecond delay, capped at 5 minutes. */
 function retryAfterMs(res) {
@@ -87,6 +115,118 @@ function retryAfterMs(res) {
   if (Number.isFinite(secs)) return Math.min(secs * 1000, 300_000);
   const when = Date.parse(raw);
   return Number.isFinite(when) ? Math.max(0, when - Date.now()) : undefined;
+}
+
+const SSE_PREFIX_LIMIT = 64 * 1024;
+
+/**
+ * Read through the first meaningful SSE event before a 200 response is accepted.
+ * Providers sometimes report an upstream failure as a top-level `error` event
+ * after the HTTP status has already succeeded. Until a valid event is seen, the
+ * dispatcher still owns failover and can try another candidate.
+ *
+ * The returned Response replays every buffered byte unchanged, then continues
+ * from the same reader. Nothing is decoded and re-encoded on the success path.
+ */
+async function gateSseResponse(response, signal) {
+  if (!response.body) return { ok: false, reason: 'empty-body' };
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const chunks = [];
+  let prefix = '';
+  let scannedBytes = 0;
+
+  const fail = async (reason) => {
+    await reader.cancel(reason).catch(() => {});
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException('The operation was aborted', 'AbortError');
+    }
+    return { ok: false, reason };
+  };
+
+  try {
+    while (scannedBytes <= SSE_PREFIX_LIMIT) {
+      const { done, value } = await reader.read();
+      if (done) return fail('empty-close');
+      if (signal?.aborted) {
+        await reader.cancel(signal.reason).catch(() => {});
+        throw signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException('The operation was aborted', 'AbortError');
+      }
+      chunks.push(value);
+      prefix += decoder.decode(value, { stream: true });
+
+      let boundary;
+      while ((boundary = /\r?\n\r?\n/.exec(prefix))) {
+        const event = prefix.slice(0, boundary.index);
+        scannedBytes += encoder.encode(prefix.slice(0, boundary.index + boundary[0].length)).byteLength;
+        prefix = prefix.slice(boundary.index + boundary[0].length);
+        if (scannedBytes > SSE_PREFIX_LIMIT) return fail('prefix-limit');
+        const lines = event.split(/\r?\n/);
+        const eventType = lines
+          .find((line) => line.startsWith('event:'))
+          ?.slice('event:'.length)
+          .trim();
+        const data = lines
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice('data:'.length).trimStart())
+          .join('\n');
+
+        // Comments and keepalive events carry no data. Keep buffering until a
+        // meaningful event appears or the fixed prefix ceiling is reached.
+        if (!data) continue;
+        if (data === '[DONE]') return fail('empty-done');
+
+        let payload;
+        try {
+          payload = JSON.parse(data);
+        } catch {
+          return fail('malformed-data');
+        }
+        if (eventType === 'error' || payload?.error) return fail('provider-error');
+
+        let bufferedIndex = 0;
+        const body = new ReadableStream({
+          async pull(controller) {
+            if (bufferedIndex < chunks.length) {
+              controller.enqueue(chunks[bufferedIndex++]);
+              return;
+            }
+            try {
+              const next = await reader.read();
+              if (next.done) controller.close();
+              else controller.enqueue(next.value);
+            } catch (error) {
+              controller.error(error);
+            }
+          },
+          cancel(reason) {
+            return reader.cancel(reason);
+          },
+        });
+        return {
+          ok: true,
+          response: new Response(body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          }),
+        };
+      }
+      if (scannedBytes + encoder.encode(prefix).byteLength > SSE_PREFIX_LIMIT) {
+        return fail('prefix-limit');
+      }
+    }
+    return fail('prefix-limit');
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return fail('read-error');
+  }
 }
 
 /**
@@ -195,6 +335,21 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt } = {
     }
 
     if (res.ok) {
+      if (body.stream && /\btext\/event-stream\b/i.test(res.headers.get('content-type') || '')) {
+        const gated = await gateSseResponse(res, signal);
+        if (signal?.aborted) {
+          if (gated.ok) await gated.response.body?.cancel(signal.reason).catch(() => {});
+          throw signal.reason instanceof Error
+            ? signal.reason
+            : new DOMException('The operation was aborted', 'AbortError');
+        }
+        if (!gated.ok) {
+          cooldowns.penalise(cand.id, 'stream error');
+          record('stream-error', `200 SSE ${gated.reason}`);
+          continue;
+        }
+        res = gated.response;
+      }
       cooldowns.clear(cand.id);
       record('ok', `${res.status}`);
       return { response: res, link, provider, keyIndex, attempts };
@@ -202,7 +357,7 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt } = {
 
     const detail = (await res.text().catch(() => '')).slice(0, 400);
 
-    if (FATAL_STATUS.has(res.status) && !isOmniRoutePoolFailure(link, res.status, detail)) {
+    if (FATAL_STATUS.has(res.status) && !wrapsRetryableUpstreamError(link, res.status, detail, chain.settings)) {
       record('fatal', `${res.status} ${detail}`);
       throw new ChainError(`Upstream rejected the request (${res.status}): ${detail}`, attempts);
     }

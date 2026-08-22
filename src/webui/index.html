@@ -40,6 +40,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         Harness
       </button>
+      <button class="nav-item" data-page="guide">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/><path d="M9 7h7M9 11h5"/></svg>
+        Guide
+      </button>
       <button class="nav-item" data-page="logs">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h14M5 9h14M5 14h9M5 19h6"/><circle cx="18" cy="17" r="3"/><path d="m20.2 19.2 1.8 1.8"/></svg>
         Logs
@@ -236,6 +240,38 @@
             <tbody id="chainBody"></tbody>
           </table>
         </div>
+
+        <!--
+          Failover tuning. These knobs decide how the chain retries and when it
+          gives up: how long each provider gets, how long a failed candidate is
+          rested, how many candidates one request may spend, and whether a
+          provider that wraps a server error in a 400/422 advances the chain
+          rather than ending it (the 2026-08-18 incident, FC-018). Saved to
+          chain.config.json and applied live via POST /admin/chain/settings —
+          no restart. Bounds are enforced server-side in admin.js.
+        -->
+        <div class="section-head"><h2>Failover tuning</h2><p>How the chain retries and when it gives up. Saved and applied immediately — no restart.</p></div>
+        <div class="card" id="failoverCard">
+          <div class="form-row">
+            <label class="form-field">Request timeout (seconds)
+              <input class="input" id="foTimeout" type="number" min="1" max="600" step="1" inputmode="numeric" />
+            </label>
+            <label class="form-field">Cooldown after a failure (seconds)
+              <input class="input" id="foCooldown" type="number" min="0" max="3600" step="1" inputmode="numeric" />
+            </label>
+            <label class="form-field">Max candidates per request
+              <input class="input" id="foMaxAttempts" type="number" min="1" max="1000" step="1" inputmode="numeric" placeholder="all" />
+            </label>
+          </div>
+          <label class="failover-check">
+            <input type="checkbox" id="foAdvanceWrapped" />
+            <span><strong>Advance past wrapped upstream errors.</strong> When a provider returns a server-side failure inside a 400 or 422 body — which OpenRouter and other routers do — try the next provider instead of failing the whole request. Recommended on; turning it off makes any 400 or 422 end the chain immediately.</span>
+          </label>
+          <div class="failover-actions">
+            <button class="btn btn-primary" id="foSave" type="button">Save failover settings</button>
+            <span class="form-hint" id="foHint" style="margin:0">A blank “Max candidates” means try every configured candidate.</span>
+          </div>
+        </div>
       </section>
 
       <!-- ── Harness ──────────────────────────────────────────────── -->
@@ -248,6 +284,11 @@
         </p>
         <div id="harnessConfig"></div>
         <div id="presetLibrary" class="preset-library card" aria-live="polite"></div>
+      </section>
+
+      <!-- ── Guide ────────────────────────────────────────────────── -->
+      <section class="page" id="page-guide">
+        <div id="guideView"></div>
       </section>
 
       <!-- ── Logs ─────────────────────────────────────────────────── -->
@@ -473,5 +514,6 @@
 <div id="toast"></div>
 <script src="/app.js"></script>
 <script src="/operator.js"></script>
+<script type="module" src="/guide-boot.js"></script>
 </body>
 </html>

@@ -680,10 +680,16 @@ function fieldHeader(field) {
   const browse = field.scope === 'components' && field.type === 'textarea'
     ? `<button class="harness-presets" type="button" data-browse-presets="${esc(field.key)}">Browse presets</button>`
     : '';
+  // Instruction components deep-link into the Guide, so an "i" tooltip reader
+  // can jump to the full chapter behind the field.
+  const guideLink = field.scope === 'components' && field.type === 'textarea'
+    ? `<button class="harness-guide-link" type="button" data-guide-component="${esc(field.key)}">Read the guide</button>`
+    : '';
   return `<div class="harness-field-head">
       <label>${esc(field.label)}</label>
       <button class="field-tip" type="button" aria-label="About ${esc(field.label)}" data-tip="${esc(field.key)}" data-tip-label="${esc(field.label)}">i</button>
       ${browse}
+      ${guideLink}
     </div>
     <p class="harness-guide">${esc(guide.guide)}</p>`;
 }
@@ -754,6 +760,14 @@ $('#harnessConfig').addEventListener('click', (event) => {
   if (!browse) return;
   event.preventDefault();
   browsePresetsFor(browse.dataset.browsePresets);
+});
+
+$('#harnessConfig').addEventListener('click', (event) => {
+  const link = event.target.closest('[data-guide-component]');
+  if (!link) return;
+  event.preventDefault();
+  // guide-boot.js (a module) owns the Guide page and exposes this global.
+  window.freechainGuide?.openForComponent(link.dataset.guideComponent);
 });
 
 $('#harnessConfig').addEventListener('submit', async (event) => {
