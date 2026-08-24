@@ -190,6 +190,42 @@ async function gateSseResponse(response, signal) {
         }
         if (eventType === 'error' || payload?.error) return fail('provider-error');
 
+        const structuralFields = new Set([
+          'annotations',
+          'id',
+          'index',
+          'metadata',
+          'role',
+          'signature',
+          'status',
+          'type',
+        ]);
+        const hasSubstantiveValue = (value) => {
+          if (typeof value === 'string') return value.length > 0;
+          if (Array.isArray(value)) return value.some(hasSubstantiveValue);
+          if (!value || typeof value !== 'object') return false;
+          return Object.entries(value).some(
+            ([field, nested]) => !structuralFields.has(field) && hasSubstantiveValue(nested),
+          );
+        };
+        const hasUsableOutput = payload?.choices?.some((choice) => {
+          const output = choice?.delta ?? choice?.message;
+          if (!output || typeof output !== 'object') return false;
+          return [
+            output.content,
+            output.refusal,
+            output.reasoning,
+            output.reasoning_content,
+            output.reasoning_details,
+            output.tool_calls,
+            output.function_call,
+            output.audio,
+          ].some(hasSubstantiveValue);
+        });
+        // Roles, usage, empty deltas, and structural nested fields are protocol
+        // scaffolding. Keep the route uncommitted until substantive output.
+        if (!hasUsableOutput) continue;
+
         let bufferedIndex = 0;
         const body = new ReadableStream({
           async pull(controller) {

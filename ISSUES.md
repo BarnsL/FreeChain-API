@@ -141,7 +141,7 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
 - **Root cause**: `dispatch()` accepted `response.ok` before inspecting a streaming response's
   first meaningful SSE event. HTTP success and streamed application success were incorrectly
   treated as the same boundary.
-- **Resolution**: A bounded 64 KiB first-event gate now rejects early SSE errors, malformed or
+- **Resolution**: A 64 KiB scanned-prefix gate now rejects early SSE errors, malformed or
   empty starts, read failures, and oversized prefixes before server headers are committed. The
   failed candidate records a sanitized `stream-error`, cools, and advances. Accepted bytes are
   replayed exactly. Healthy OpenCode and OpenRouter Ox Alpha routes are first and second. The
@@ -158,6 +158,43 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
   compression chain contains only supported Ox routes plus free Nemotron, and a local Hermes
   one-shot through configured FreeChain returned the exact verification sentinel. Full evidence
   and rollback details are in the RCA.
+
+### FC-019: Metadata-only SSE events suppressed FreeChain failover
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Bug
+- **Description**: Nous Man reached FreeChain with valid authentication and a streamed
+  `model=auto` request, but received no assistant output after its retries. FreeChain accepted the
+  first OpenCode candidate after a parseable non-error SSE event, recorded the attempt as `ok`,
+  and committed downstream status 200 before the journal established usable output. The caller
+  disconnected with HTTP 499, and none of the other 33 configured links were attempted. The exact
+  upstream event shape was intentionally not retained; the observed behavior is consistent with a
+  protocol-only event crossing the old gate.
+- **Root cause**: `gateSseResponse()` treated any parsed non-error JSON data event as proof of a
+  usable stream. The implementation allowed protocol scaffolding such as role-only, empty-delta,
+  usage-only, and structurally non-empty but semantically empty nested events to pass even though
+  they carried no content, reasoning, refusal, audio, function call, or tool call.
+- **Resolution**: The existing bounded gate now remains in control until a choice contains a
+  non-empty usable output field. A stream that sends `[DONE]` or closes before that point records
+  `stream-error`, cools the candidate, and advances normally. Tool-call-only streams remain valid
+  when text output is zero characters.
+- **RCA**: `docs/RCA-NOUS-MAN-FREECHAIN-EMPTY-STREAM-2026-08-23.md`
+- **Verification**: Regression RED proved the old gate returned the first stream after an
+  index-only tool-call scaffold.
+  GREEN selected the second tool-call stream, recorded `stream-error` then `ok`, cooled the first
+  candidate, and replayed the accepted metadata plus tool-call bytes exactly. A mutation check
+  proved the output-contract regression catches a removed accepted field, and coverage exercises
+  refusal, both reasoning variants, reasoning details, function calls, and audio. The chain suite
+  passed 20 of 20. The full suite passed 110 with 0 failures and 1 expected Windows permission
+  skip, 111 total. The Windows
+  package built and the installed supervisor plus worker returned healthy on loopback. A fresh
+  authenticated streamed `model=auto` request returned HTTP 200 in two attempts: OpenCode failed
+  before usable output, OpenRouter then completed with reasoning and a tool call followed by
+  `[DONE]`. The journal correlated the same request ID to status 200, `tool_calls`, 244 exact tokens,
+  and attempts `http-error` then `ok`. After the review correction and final rebuild, a second fresh
+  authenticated request on the installed binary returned HTTP 200 in one OpenCode attempt, emitted
+  `reasoning_content` plus a tool call, ended with `[DONE]`, and correlated to a status-200 journal
+  record with finish reason `tool_calls` and 244 exact tokens.
 
 ### FC-001: Add request logging to disk
 - **Status**: DONE

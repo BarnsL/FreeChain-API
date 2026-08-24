@@ -157,6 +157,72 @@ test('a 200 SSE error before the first valid event advances the chain', async ()
   }
 });
 
+test('metadata-only SSE scaffolds followed by DONE advance to a substantive tool-call stream', async () => {
+  // Break caught: role-only and index-only tool-call deltas are protocol
+  // scaffolding. Accepting either commits the route before usable output exists.
+  const roleEvent = 'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}\n\n';
+  const emptyStream = `${roleEvent}data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0}]}}]}\n\ndata: [DONE]\n\n`;
+  const toolStream = `${roleEvent}data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"ping","arguments":"{}"}}]}}]}\n\ndata: [DONE]\n\n`;
+  const a = await upstream((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(emptyStream);
+  });
+  const b = await upstream((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(toolStream);
+  });
+  const chain = chainOf({ model: 'first', port: a.port }, { model: 'second', port: b.port });
+  const cooldowns = new Cooldowns(5_000);
+
+  try {
+    const { response, link, attempts } = await dispatch(
+      chain,
+      cooldowns,
+      { ...askBody, stream: true },
+    );
+
+    assert.equal(link.model, 'second');
+    assert.deepEqual(attempts.map(({ outcome }) => outcome), ['stream-error', 'ok']);
+    assert.equal(cooldowns.isCooling('0:local:0'), true);
+    assert.equal(await response.text(), toolStream, 'the accepted tool-call stream must preserve every byte');
+  } finally {
+    a.close(); b.close();
+  }
+});
+
+test('each documented non-text SSE output field can commit a route', async () => {
+  const variants = [
+    ['refusal', { refusal: 'cannot comply' }],
+    ['reasoning', { reasoning: 'brief rationale' }],
+    ['reasoning_content', { reasoning_content: 'brief rationale' }],
+    ['reasoning_details', { reasoning_details: [{ type: 'summary_text', text: 'brief rationale' }] }],
+    ['function_call', { function_call: { name: 'ping', arguments: '{}' } }],
+    ['audio', { audio: { data: 'dGVzdA==', transcript: 'ping' } }],
+  ];
+
+  for (const [field, delta] of variants) {
+    const validStream = `data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\ndata: [DONE]\n\n`;
+    const server = await upstream((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(validStream);
+    });
+
+    try {
+      const { response, link, attempts } = await dispatch(
+        chainOf({ model: 'first', port: server.port }),
+        new Cooldowns(5_000),
+        { ...askBody, stream: true },
+      );
+
+      assert.equal(link.model, 'first', `${field} should establish usable output`);
+      assert.deepEqual(attempts.map(({ outcome }) => outcome), ['ok']);
+      assert.equal(await response.text(), validStream, `${field} stream bytes must replay exactly`);
+    } finally {
+      server.close();
+    }
+  }
+});
+
 test('the SSE prefix cap ignores bytes after a valid first event in the same transport chunk', async () => {
   // Break caught: Web Stream chunk boundaries are transport details. A large
   // chunk must not trip the prefix cap when its first valid event ends early.

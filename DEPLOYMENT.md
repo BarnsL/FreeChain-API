@@ -151,7 +151,7 @@ For each incoming request, the server:
 2. **Sorts** candidates: non-cooling first, cooling last (demoted but not dropped).
 3. **Tries** each candidate via `fetch()` to the provider's `/chat/completions`.
 4. **On non-streaming success**: returns the response and reports the serving provider in `X-Freechain-*` headers.
-5. **On streaming HTTP success**: reads a bounded first SSE event before accepting the candidate.
+5. **On streaming HTTP success**: reads a bounded SSE prefix until usable model output appears before accepting the candidate.
 6. **On retryable failure** (429, 5xx, network error, or early `stream-error`): penalises the candidate with a cooldown and moves to the next.
 7. **On fatal failure** (400, 422): stops immediately unless the body identifies a wrapped upstream or nested-router failure.
 8. **If all fail**: returns 502 with the list of attempts.
@@ -179,19 +179,25 @@ link has been exhausted.
 ### Streaming first-event gate
 
 An HTTP 200 status is not sufficient proof that an SSE completion started successfully. Routers can
-return 200 and place an upstream provider error in the first data event. `dispatch()` therefore owns
-the response until it sees the first complete, meaningful SSE event:
+return 200 and place an upstream provider error or only protocol metadata in early data events.
+`dispatch()` therefore owns the response until it sees a complete SSE event carrying usable model
+output:
 
-1. Buffer at most 64 KiB, including comment or keepalive events.
+1. Scan at most 64 KiB of complete SSE prefix events, including comments and keepalives. If a
+   usable event ends early inside a larger transport chunk, retain and replay that whole chunk.
 2. Parse `data:` lines without re-encoding the raw bytes.
-3. Reject an explicit error event, top-level JSON `error`, malformed first data event, empty close,
-   `[DONE]` before content, read failure, or exceeded prefix ceiling.
+3. Reject an explicit error event, top-level JSON `error`, malformed data event, empty close,
+   `[DONE]` before usable output, read failure, or exceeded prefix ceiling.
 4. Record `stream-error`, cool that candidate, and continue through normal failover.
-5. For a valid event, replay every buffered byte exactly and continue from the same upstream reader.
+5. Treat substantive nested values in content, refusal, reasoning, reasoning details, audio,
+   function calls, and tool calls as usable output. Structural IDs, indexes, roles, type tags,
+   signatures, annotations, metadata, status fields, empty deltas, keepalives, comments, and
+   usage-only events remain buffered and do not commit the route.
+6. For usable output, replay every buffered byte exactly and continue from the same upstream reader.
 
-After the first valid event reaches the client, FreeChain cannot retry a later stream failure without
-risking duplicated text or tool calls. The client receives that later failure or truncation. This is
-the intentional boundary between reliable early failover and genuine streaming.
+After the first usable output event reaches the client, FreeChain cannot retry a later stream failure
+without risking duplicated text or tool calls. The client receives that later failure or truncation.
+This is the intentional boundary between reliable early failover and genuine streaming.
 
 ## Credential System
 
@@ -566,12 +572,13 @@ node --test "test/*.test.js"
 
 Thirteen test files use Node's built-in test runner. Provider and server integration tests use real
 local HTTP servers; deterministic stream-boundary tests use controlled Web Streams. The current
-suite contains 109 tests, with one expected Windows permission skip.
+suite contains 111 tests, with one expected Windows permission skip.
 
 - **admin.test.js** (23 tests): environment-file round-tripping, key masking, access-key gating,
   settings persistence, path traversal, dashboard serving, and shortcut boundaries.
-- **chain.test.js** (18 tests): failover, fatal stops, wrapped errors, cooling, model pinning,
-  streamed first-event gating, exact replay, oversized chunks, aborts, and server routes.
+- **chain.test.js** (20 tests): failover, fatal stops, wrapped errors, cooling, model pinning,
+  streamed usable-output gating, nested output-field coverage, exact replay, metadata-only starts,
+  oversized chunks, aborts, and server routes.
 - **cli.test.js** (2 tests): help controls and no-UI access-key startup.
 - **deep-health.test.js** (4 tests): probe redaction, rate limiting, access control, and disconnect cancellation.
 - **default-chain.test.js** (1 test): the shipped chain contains no paid fallback.
