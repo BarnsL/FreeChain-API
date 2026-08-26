@@ -1,6 +1,6 @@
 {
   "name": "freechain",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "OpenAI-compatible failover router over a chain of free and paid model providers",
   "type": "module",
   "bin": {

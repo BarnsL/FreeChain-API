@@ -278,6 +278,17 @@ export function candidatesFor(chain, requestedModel) {
   for (const link of chain.links) {
     if (wanted && link.model !== wanted && `${link.provider}/${link.model}` !== wanted) continue;
 
+    if (link._starterKey) {
+      out.push({
+        link,
+        provider: link.provider,
+        key: link._starterKey,
+        keyIndex: 0,
+        id: `starter:${link.provider}:0`,
+      });
+      continue;
+    }
+
     const accounts = resolveAccounts(link.provider);
     if (accounts.length) {
       const perSlot = new Map();

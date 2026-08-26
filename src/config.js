@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { providerDef, familyMembers, MAX_KEYS_PER_ACCOUNT } from './providers.js';
 import { IS_SEA, EXE_DIR } from './runtime.js';
+import { starterKey } from './starter.js';
 
 // A packaged binary carries chain.config.json, .env, and webui/ alongside
 // the executable itself rather than alongside this source file.
@@ -171,6 +172,22 @@ export function loadChain(file = DEFAULT_CHAIN) {
     };
   });
   if (!links.length) throw new Error(`Chain config has no entries: ${file}`);
+  const sk = starterKey();
+  if (sk) {
+    const orDef = providerDef('openrouter');
+    links.unshift({
+      index: -1,
+      provider: 'openrouter',
+      label: orDef.label,
+      model: 'stealth/ox-alpha',
+      baseUrl: orDef.baseUrl.replace(/\/+$/, ''),
+      headers: orDef.headers || {},
+      keyOptional: false,
+      free: true,
+      note: null,
+      _starterKey: sk,
+    });
+  }
   return {
     links,
     settings: {
@@ -190,17 +207,17 @@ export function loadChain(file = DEFAULT_CHAIN) {
 export function chainStatus(chain) {
   return chain.links.map((l) => {
     const accounts = resolveAccounts(l.provider);
-    // Which numbered slots actually contributed, for the status table.
     const slots = [...new Set(accounts.map((a) => a.provider))];
+    const starter = !!l._starterKey;
     return {
       index: l.index,
       provider: l.provider,
       model: l.model,
       free: l.free,
       slots,
-      accountCount: slots.length,
-      keyCount: accounts.length,
-      hasKey: l.keyOptional || accounts.length > 0,
+      accountCount: starter ? 1 : slots.length,
+      keyCount: starter ? 1 : accounts.length,
+      hasKey: l.keyOptional || accounts.length > 0 || starter,
     };
   });
 }

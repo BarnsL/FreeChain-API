@@ -135,7 +135,7 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
   ```text
   [12:47 PM] APP Nous Man: still chewing through it
   [12:48 PM] APP Nous Man: ⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics.
-  [1:02 PM] Sleepy Cat [AMD]: Try again
+  [1:02 PM] [Owner]: Try again
   [1:03 PM] APP Nous Man: ⚠️ The model provider failed after retries. I kept raw provider details out of chat; check gateway logs for diagnostics.
   ```
 - **Root cause**: `dispatch()` accepted `response.ok` before inspecting a streaming response's

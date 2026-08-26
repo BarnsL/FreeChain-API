@@ -14,6 +14,7 @@
 // platform on its own runner instead (.github/workflows/release.yml).
 
 import { execFileSync } from 'node:child_process';
+import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,20 @@ const run = (cmd, args, opts = {}) =>
 fs.rmSync(DIST, { recursive: true, force: true });
 fs.mkdirSync(DIST, { recursive: true });
 
+const starterRaw = process.env.FREECHAIN_STARTER_KEY || '';
+let starterDefine = 'null';
+if (starterRaw) {
+  const dk = createHash('sha256').update('freechain\x00v1\x00starter').digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', dk, iv);
+  const ct = cipher.update(starterRaw, 'utf8', 'hex') + cipher.final('hex');
+  const tag = cipher.getAuthTag().toString('hex');
+  starterDefine = JSON.stringify(
+    Buffer.from(JSON.stringify({ iv: iv.toString('hex'), tag, ct })).toString('base64'),
+  );
+  console.log('· encrypted starter credential for release bundle');
+}
+
 console.log('· bundling ESM sources to a single CommonJS entry');
 await build({
   entryPoints: [path.join(ROOT, 'bin', 'freechain.mjs')],
@@ -43,10 +58,10 @@ await build({
   format: 'cjs',
   outfile: path.join(DIST, 'freechain.cjs'),
   banner: { js: '// FreeChain — bundled for single-executable packaging.' },
-  // CommonJS has no import.meta. Every use of it sits on an `IS_SEA ? … : …`
-  // branch that a packaged binary never takes, so a well-formed placeholder
-  // keeps fileURLToPath from throwing if one is ever evaluated.
-  define: { 'import.meta.url': JSON.stringify('file:///freechain-sea') },
+  define: {
+    'import.meta.url': JSON.stringify('file:///freechain-sea'),
+    '__FREECHAIN_STARTER__': starterDefine,
+  },
 });
 
 console.log('· writing SEA config');
@@ -171,6 +186,27 @@ fs.writeFileSync(
   ].join('\n')
 );
 zipDir(nodePortable, path.join(DIST, 'freechain-portable-node.zip'));
+
+if (WIN) {
+  const ISCC_PATHS = [
+    'C:\\InnoSetup6\\ISCC.exe',
+    'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe',
+    'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
+  ];
+  const iscc = ISCC_PATHS.find((p) => fs.existsSync(p));
+  if (iscc) {
+    const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+    console.log(`· compiling Inno Setup installer (v${pkgVersion})`);
+    run(iscc, [
+      `/DMyAppVersion=${pkgVersion}`,
+      `/DPortableDir=${portable}`,
+      `/DSourceDir=${path.join(ROOT, 'scripts')}`,
+      path.join(ROOT, 'scripts', 'freechain.iss'),
+    ]);
+  } else {
+    console.log('· Inno Setup not found, skipping installer');
+  }
+}
 
 console.log('\nBuilt in dist/:');
 for (const f of fs.readdirSync(DIST).sort()) {
