@@ -196,6 +196,60 @@ Issues are tracked in this file. Each issue has a unique ID, status, priority, a
   `reasoning_content` plus a tool call, ended with `[DONE]`, and correlated to a status-200 journal
   record with finish reason `tool_calls` and 244 exact tokens.
 
+### FC-020: Provider-specific validation errors stopped compatible-link failover
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Bug
+- **Description**: Recent Nous Man streamed requests reached FreeChain, but a provider-specific
+  HTTP 400 stopped the chain while compatible configured links remained untried. The observed
+  categories were a provider tool-array item ceiling and an opaque thought-signature requirement
+  on function-call history authored by another provider.
+- **Root cause**: `wrapsRetryableUpstreamError()` treated these candidate capability boundaries as
+  globally malformed caller requests. `dispatch()` therefore recorded a fatal attempt and ended
+  failover at the first incompatible provider.
+- **Resolution**: A narrow candidate-compatibility marker now advances for the two observed error
+  shapes. Ordinary malformed HTTP 400 and 422 responses remain fatal, request history is unchanged,
+  and `advanceOnWrappedServerErrors=false` retains strict hard-fail behavior.
+- **RCA**: `docs/RCA-FREECHAIN-NOUSMAN-PROVIDER-COMPATIBILITY-2026-09-02.md`
+- **Verification**: The focused chain suite passed 21 of 21. The full suite passed 111 with 0
+  failures and 1 expected Windows permission skip, 112 total. The release build produced the
+  executable, portable archives, and installer. The installed executable matches the tested build,
+  runs as one supervisor plus one worker, returns HTTP 200 from local and deep health, and served a
+  fresh request after three failed candidates and a fourth successful attempt. After the managed
+  Nous Man restart, 158 incoming tools were reduced to 32 model-visible tools, the correlated
+  installed request reached HTTP 200 `served` after eight attempts, and an official Discord API
+  read-back confirmed a bot-authored referenced response containing 1,797 characters. After the
+  final independent review and managed replacement, the reviewer returned READY, the only gateway
+  process was running and Discord-connected, the exact 160-tool replay reduced to 32 model-visible
+  schemas, and post-startup 32-tool FreeChain requests reached HTTP 200. A new human-authored reply
+  could not be created on that final process because every authorized input-control path was
+  unavailable; no bot or webhook substitute was used.
+
+### FC-021: OpenCode requests and Analyze omitted provider session identity
+- **Status**: DONE
+- **Priority**: P1
+- **Type**: Bug
+- **Description**: Nous Man requests reached FreeChain, but the OpenCode candidate returned
+  `MissingSessionID` because FreeChain forwarded credentials and content type without the dynamic
+  session identity required by OpenCode. The explicit Analyze/deep-health path bypassed normal
+  dispatch and omitted the same identity.
+- **Root cause**: OpenCode session and request identifiers are request-time values, not shortcut
+  arguments. FreeChain had no OpenCode-specific outbound identity composer and did not propagate its
+  sanitized client metadata into `dispatch()`.
+- **Resolution**: OpenCode-family requests now receive a bounded session ID, request ID, truthful
+  FreeChain client name, and FreeChain user agent. A caller's allowlisted session ID is preserved;
+  otherwise the FreeChain request ID is used as a non-empty fallback. Non-OpenCode routes are
+  unchanged, and Analyze uses the same header composer.
+- **Patch notes**: `docs/PATCH-NOTES-0.7.1.md`
+- **Verification**: Test-first loopback regressions captured the missing headers, then passed for
+  caller-session preservation, request-ID fallback, provider isolation, metadata aliases, and
+  Analyze identity. The full 117-test suite had 116 passes, 0 failures, and 1 expected Windows
+  permission skip. The 0.7.1 build and installer completed; the installed executable matched the
+  tested build, ran as one supervisor plus one worker, and retained its Start Menu shortcut. Fresh
+  installed-runtime proof returned HTTP 200 from Analyze across all 34 configured links, including
+  an OpenCode model, then served a separate streamed OpenCode completion in one attempt through
+  `opencode-zen1`, ending with `[DONE]`.
+
 ### FC-001: Add request logging to disk
 - **Status**: DONE
 - **Priority**: P2

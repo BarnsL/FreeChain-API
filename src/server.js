@@ -7,7 +7,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { chainStatus, resolveAccounts, resolveKeys } from './config.js';
-import { Cooldowns, dispatch, ChainError } from './chain.js';
+import { Cooldowns, dispatch, ChainError, upstreamHeaders } from './chain.js';
 import { IS_SEA, EXE_DIR } from './runtime.js';
 import {
   inventory,
@@ -183,6 +183,7 @@ function serveStatic(res, pathname) {
 async function probeLink(link, timeoutMs, signal) {
   const account = resolveAccounts(link.provider)[0];
   const startedAt = Date.now();
+  const requestId = randomUUID();
   const result = {
     index: link.index,
     provider: link.provider,
@@ -199,7 +200,7 @@ async function probeLink(link, timeoutMs, signal) {
       headers: {
         'Content-Type': 'application/json',
         ...(account?.key ? { Authorization: `Bearer ${account.key}` } : {}),
-        ...link.headers,
+        ...upstreamHeaders(link, { requestId, sessionId: requestId }),
       },
       body: JSON.stringify({
         model: link.model,
@@ -616,6 +617,8 @@ ${preset.content}` : preset.content;
       try {
         const { response, link, provider, keyIndex, attempts } = await dispatch(chain, cooldowns, body, {
           signal: abort.signal,
+          requestId: journalRecord.id,
+          sessionId: journalRecord.client?.sessionId,
           onAttempt: (a) => {
             if (verbose || a.outcome !== 'ok') {
               console.log(

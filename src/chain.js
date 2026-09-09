@@ -10,6 +10,31 @@
 // none of them can fix.
 
 import { resolveAccounts } from './config.js';
+import { randomUUID } from 'node:crypto';
+
+const OPENCODE_PROVIDER = /^opencode-zen(?:\d+)?$/;
+const FREECHAIN_USER_AGENT = 'FreeChain/0.7.1';
+
+const boundedHeaderId = (value, limit = 120) => {
+  const clean = String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  return clean ? clean.slice(0, limit) : null;
+};
+
+/** Add the dynamic routing identity required by OpenCode, and only OpenCode. */
+export function upstreamHeaders(link, { requestId, sessionId } = {}) {
+  const configured = { ...(link.headers || {}) };
+  if (!OPENCODE_PROVIDER.test(link.provider)) return configured;
+
+  const request = boundedHeaderId(requestId) || randomUUID();
+  const session = boundedHeaderId(sessionId) || request;
+  return {
+    ...configured,
+    'User-Agent': FREECHAIN_USER_AGENT,
+    'x-opencode-session': session,
+    'x-opencode-request': request,
+    'x-opencode-client': 'freechain',
+  };
+}
 
 /**
  * Thrown when `dispatch()` gives up: every candidate was tried (or the first
@@ -90,6 +115,14 @@ const FATAL_STATUS = new Set([400, 422]);
 const WRAPPED_SERVER_ERROR =
   /server[_ ]error|upstream (?:error|request failed)|provider returned error|no (?:endpoints|allowed providers|instances)|temporarily unavailable|over(?:loaded|capacity)|internal server error|bad gateway|gateway time-?out|service unavailable|\[(?:404|408|409|425|429|5\d\d)\]/i;
 
+// Some HTTP 400 responses describe a candidate's compatibility boundary, not
+// a malformed caller request. Tool-array ceilings vary by provider, and a
+// provider-specific opaque thought signature cannot be invented when another
+// link authored the earlier tool call. A later compatible link can still serve
+// the unchanged request, so these exact observed failures belong to failover.
+const CANDIDATE_COMPATIBILITY_ERROR =
+  /['"]tools['"]\s*:\s*maximum number of items is \d+|function call is missing a thought_signature/i;
+
 /**
  * Whether a fatal-status (400/422) body is actually a wrapped, retryable
  * upstream failure rather than a genuine caller error, so `dispatch()` advances
@@ -104,7 +137,7 @@ const WRAPPED_SERVER_ERROR =
 export function wrapsRetryableUpstreamError(link, status, detail, settings = {}) {
   if (link.provider === 'omniroute' && /"diagnostics"\s*:\s*\{/.test(detail)) return true;
   if (settings.advanceOnWrappedServerErrors === false) return false;
-  return WRAPPED_SERVER_ERROR.test(detail);
+  return WRAPPED_SERVER_ERROR.test(detail) || CANDIDATE_COMPATIBILITY_ERROR.test(detail);
 }
 
 /** Parse a `Retry-After` header (seconds or an HTTP date) into a millisecond delay, capped at 5 minutes. */
@@ -322,9 +355,11 @@ export function candidatesFor(chain, requestedModel) {
  * Returns { response, link, provider, keyIndex, attempts }, where `provider` is
  * the account slot that answered. `response` is a live Response.
  */
-export async function dispatch(chain, cooldowns, body, { signal, onAttempt } = {}) {
+export async function dispatch(chain, cooldowns, body, { signal, onAttempt, requestId, sessionId } = {}) {
   const candidates = candidatesFor(chain, body.model);
   const attempts = [];
+  const request = boundedHeaderId(requestId) || randomUUID();
+  const session = boundedHeaderId(sessionId) || request;
 
   if (!candidates.length) {
     throw new ChainError(
@@ -369,7 +404,7 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt } = {
         headers: {
           'Content-Type': 'application/json',
           ...(key ? { Authorization: `Bearer ${key}` } : {}),
-          ...link.headers,
+          ...upstreamHeaders(link, { requestId: request, sessionId: session }),
         },
         // The caller's model name is replaced by this link's own model id.
         body: JSON.stringify({ ...body, model: link.model }),

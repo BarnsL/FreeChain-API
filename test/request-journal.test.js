@@ -92,6 +92,29 @@ test('client metadata is opt-in, categorized, sanitized, and length capped', () 
   assert.doesNotMatch(JSON.stringify(metadata), /Bearer|must-never-appear/);
 });
 
+test('session metadata aliases are allowlisted and preserve FreeChain precedence', () => {
+  // Break caught: a coding agent sends its native stable session header, but
+  // the proxy discards it before choosing an OpenCode upstream identity.
+  const cases = [
+    ['x-opencode-session', 'open-session'],
+    ['x-hermes-session-id', 'hermes-session'],
+    ['x-session-id', 'standard-session'],
+  ];
+
+  for (const [header, expected] of cases) {
+    assert.equal(requestMetadata({ headers: { [header]: expected } }).sessionId, expected);
+  }
+  assert.equal(requestMetadata({
+    headers: {
+      'x-freechain-session-id': 'freechain-session',
+      'x-subchain-session-id': 'subchain-session',
+      'x-opencode-session': 'open-session',
+      'x-hermes-session-id': 'hermes-session',
+      'x-session-id': 'standard-session',
+    },
+  }).sessionId, 'freechain-session');
+});
+
 test('journal bounds memory, filters before pagination, and drops unsafe fields', () => {
   const journal = new RequestJournal({ enabled: false, maxEntries: 3 });
   assert.deepEqual(journal.status(), {

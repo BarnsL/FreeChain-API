@@ -261,7 +261,14 @@ export function requestMetadata(req) {
   return compact({
     remoteCategory: remoteCategory(req?.socket?.remoteAddress),
     reportedApp: cleanText(headers['x-freechain-app'] ?? headers['x-subchain-app'], 80),
-    sessionId: cleanText(headers['x-freechain-session-id'] ?? headers['x-subchain-session-id'], 120),
+    sessionId: cleanText(
+      headers['x-freechain-session-id'] ??
+      headers['x-subchain-session-id'] ??
+      headers['x-opencode-session'] ??
+      headers['x-hermes-session-id'] ??
+      headers['x-session-id'],
+      120,
+    ),
     sdk: Object.keys(sdk).length ? sdk : undefined,
   });
 }

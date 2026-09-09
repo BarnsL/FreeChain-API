@@ -74,6 +74,94 @@ test('the default Ox Alpha routes pin the bad OpenCode slot at the very back', (
   );
 });
 
+test('OpenCode request identity is stable and truthful across one dispatch', async () => {
+  // Break caught: OpenCode rejects a valid coding-agent request when the
+  // proxy forwards only authorization/content-type and drops session identity.
+  let captured;
+  const source = await upstream((req, res) => {
+    captured = req.headers;
+    ok('opencode')(req, res);
+  });
+  const chain = chainOf({ provider: 'opencode-zen1', model: 'open-model', port: source.port });
+
+  try {
+    const { response } = await dispatch(chain, new Cooldowns(50), askBody, {
+      requestId: 'request-fixture-1',
+      sessionId: 'session-fixture-1',
+    });
+    await response.json();
+
+    assert.equal(captured['x-opencode-session'], 'session-fixture-1');
+    assert.equal(captured['x-opencode-request'], 'request-fixture-1');
+    assert.equal(captured['x-opencode-client'], 'freechain');
+    assert.equal(captured['user-agent'], 'FreeChain/0.7.1');
+  } finally {
+    source.close();
+  }
+});
+
+test('non-OpenCode request identity does not gain OpenCode headers', async () => {
+  // Break caught: provider-specific identity accidentally leaks to every
+  // upstream instead of staying at the OpenCode boundary.
+  let captured;
+  const source = await upstream((req, res) => {
+    captured = req.headers;
+    ok('local')(req, res);
+  });
+  const chain = chainOf({ provider: 'local', model: 'local-model', port: source.port });
+
+  try {
+    const { response } = await dispatch(chain, new Cooldowns(50), askBody, {
+      requestId: 'request-fixture-2',
+      sessionId: 'session-fixture-2',
+    });
+    await response.json();
+
+    assert.equal(captured['x-opencode-session'], undefined);
+    assert.equal(captured['x-opencode-request'], undefined);
+    assert.equal(captured['x-opencode-client'], undefined);
+  } finally {
+    source.close();
+  }
+});
+
+test('server preserves caller session identity at the OpenCode boundary', async () => {
+  // Break caught: request metadata reaches FreeChain for correlation but is not
+  // handed to dispatch, so OpenCode sees no stable conversation identity.
+  let captured;
+  const source = await upstream((req, res) => {
+    captured = req.headers;
+    ok('opencode')(req, res);
+  });
+  const app = createServer(chainOf({ provider: 'opencode-zen1', model: 'open-model', port: source.port }));
+  await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${app.address().port}`;
+  const previous = process.env[ACCESS_KEY_VAR];
+  process.env[ACCESS_KEY_VAR] = 'server-session-test-key';
+
+  try {
+    const response = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer server-session-test-key',
+        'Content-Type': 'application/json',
+        'X-FreeChain-Session-Id': 'nous-conversation-1',
+      },
+      body: JSON.stringify({ model: 'auto', ...askBody }),
+    });
+    assert.equal(response.status, 200);
+    await response.json();
+
+    assert.equal(captured['x-opencode-session'], 'nous-conversation-1');
+    assert.equal(captured['x-opencode-request'], response.headers.get('x-freechain-request-id'));
+  } finally {
+    app.close();
+    source.close();
+    if (previous === undefined) delete process.env[ACCESS_KEY_VAR];
+    else process.env[ACCESS_KEY_VAR] = previous;
+  }
+});
+
 test('falls through a rate-limited link to the next one', async () => {
   const a = await upstream(status(429));
   const b = await upstream(ok('second'));
@@ -343,6 +431,48 @@ test('a 400 that wraps an upstream server error advances the chain', async () =>
   assert.equal(attempts.length, 2);
   assert.equal(attempts[0].outcome, 'http-error');
   a.close(); b.close();
+});
+
+test('provider-specific tool validation errors advance to a compatible link', async () => {
+  const cases = [
+    {
+      name: 'tool array item ceiling',
+      detail: JSON.stringify({
+        error: {
+          type: 'invalid_request_error',
+          message: "'tools' : maximum number of items is 128",
+        },
+      }),
+    },
+    {
+      name: 'provider-only thought signature',
+      detail: JSON.stringify({
+        error: {
+          code: 400,
+          message: 'Function call is missing a thought_signature in functionCall parts.',
+        },
+      }),
+    },
+  ];
+
+  for (const { name, detail } of cases) {
+    const incompatible = await upstream(status(400, detail));
+    const compatible = await upstream(ok('compatible'));
+    const chain = chainOf(
+      { model: `incompatible-${name}`, port: incompatible.port },
+      { model: 'compatible', port: compatible.port },
+    );
+
+    try {
+      const { link, attempts } = await dispatch(chain, new Cooldowns(50), askBody);
+
+      assert.equal(link.model, 'compatible', `${name} must not end provider failover`);
+      assert.deepEqual(attempts.map(({ outcome }) => outcome), ['http-error', 'ok']);
+    } finally {
+      incompatible.close();
+      compatible.close();
+    }
+  }
 });
 
 test('the wrapped-error exception can be turned off for hard-fail behaviour', async () => {

@@ -22,7 +22,7 @@ function chainOf(...links) {
   return {
     links: links.map((link, index) => ({
       index,
-      provider: 'local',
+      provider: link.provider || 'local',
       label: 'local test provider',
       model: link.model,
       baseUrl: `http://127.0.0.1:${link.port}/v1`,
@@ -39,6 +39,31 @@ async function boot(chain) {
   await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
   return { app, base: `http://127.0.0.1:${app.address().port}` };
 }
+
+test('deep health sends OpenCode identity on every Analyze probe', async (t) => {
+  // Break caught: Analyze bypasses dispatch and sends no OpenCode session,
+  // making a configured key look unhealthy even though the route is usable.
+  let captured;
+  const source = await upstream((req, res) => {
+    captured = req.headers;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{}');
+  });
+  const { app, base } = await boot(chainOf({
+    provider: 'opencode-zen1',
+    model: 'open-model',
+    port: source.port,
+  }));
+  t.after(() => { app.close(); source.close(); });
+
+  const response = await fetch(`${base}/v1/health/deep`, { method: 'POST', body: '{}' });
+
+  assert.equal(response.status, 200);
+  assert.match(captured['x-opencode-session'] || '', /^[0-9a-f-]{36}$/);
+  assert.equal(captured['x-opencode-request'], captured['x-opencode-session']);
+  assert.equal(captured['x-opencode-client'], 'freechain');
+  assert.equal(captured['user-agent'], 'FreeChain/0.7.1');
+});
 
 test('deep health sends one redacted one-token probe per configured link only on POST', async (t) => {
   const received = [];

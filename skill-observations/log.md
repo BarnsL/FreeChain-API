@@ -238,3 +238,99 @@ Observations captured during task-oriented work.
 **Suggested improvement:** Populate each data-heavy workspace with maximum-length metadata before release sign-off, activate that workspace, and run the canonical card geometry check there. Include record controls and secondary labels, not only page-level overflow.
 
 **Principle:** Responsive verification is page-state coverage, not merely viewport coverage.
+
+<!-- 2026-08-23 checkpoint after the third incident-plan completion: no new skill observations; the relevant streamed-protocol principle is already captured in Observation 12. -->
+
+### Observation 16: Verify repository visibility before push
+
+**Status:** OPEN
+**Date:** 2026-08-23
+**Session context:** Completed bug-fix handoff to a Git remote
+**Skill:** finishing-a-development-branch
+**Type:** open-source
+**Phase/Area:** Remote delivery preflight
+
+**Issue:** The push workflow assumed the configured origin was an acceptable destination. A live repository check showed that the requested private destination was actually public, so executing the documented push step would have crossed the intended publication boundary.
+
+**Suggested improvement:** Before staging or pushing, verify the exact remote URL, authenticated repository visibility, current branch, upstream, and ahead/behind state. Stop before any external write when the destination conflicts with the user's publication policy.
+
+**Principle:** Verify destination properties live before every external delivery; a familiar remote name does not prove an acceptable publication boundary.
+
+### Observation 17: Gate progressive tool disclosure on provider count limits
+
+**Status:** OPEN
+**Date:** 2026-09-02
+**Session context:** Cross-system RCA for an agent request rejected by multiple model providers
+**Skill:** New skill candidate: provider-schema-budgeting
+**Type:** open-source
+**Phase/Area:** Model request assembly
+
+**Issue:** Progressive tool disclosure activated only when schemas crossed a context-token percentage. A very large-context model therefore received more tool definitions than a provider's hard array limit even though schema tokens were below the configured percentage.
+
+**Suggested improvement:** Treat model-facing schema budgets as the intersection of token pressure, provider item-count ceilings, and always-visible core tools. Activate existing progressive disclosure when any hard boundary would be crossed, and verify both visible count and deferred-call reachability.
+
+**Principle:** Context capacity cannot override a transport's hard item-count contract; request assembly must satisfy every downstream limit before dispatch.
+
+### Observation 18: Verify every downstream gate and the final outbound contract
+
+**Status:** OPEN
+**Date:** 2026-09-02
+**Session context:** Reviewed cross-system repair for Discord reply admission and model tool-array budgeting
+**Skill:** requesting-code-review
+**Type:** open-source
+**Phase/Area:** Boundary verification
+
+**Issue:** Focused tests proved the first Discord admission helper and the pre-assembly tool-count trigger, but independent review found that later guild and recovery gates could still reject the admitted reply. It also found that retained direct tools plus bridge schemas needed their own final-count guarantee after progressive disclosure.
+
+**Suggested improvement:** For a policy or request-shaping repair, enumerate every sequential rejection gate and every transformation between source and sink. Test the full production path, include anti-loop negative cases, and assert the final model-visible payload against hard provider limits rather than only the input that activates the transformation.
+
+**Principle:** A boundary fix is complete only when valid input survives every downstream gate and the final outbound payload satisfies the external contract.
+
+### Observation 19: Tie user-visible proof to the final deployed process
+
+**Status:** OPEN
+**Date:** 2026-09-02
+**Session context:** Final verification after a reviewed Nous Man gateway replacement
+**Skill:** verification-before-completion
+**Type:** open-source
+**Phase/Area:** Deployment evidence
+
+**Issue:** A real Discord reply and official read-back proved the repaired path on an earlier replacement process, but a later reviewer correction required another managed restart. Reusing the older reply as proof for the final process would blur source correctness, deployment correctness, and user-visible runtime correctness.
+
+**Suggested improvement:** Record the final process start time before the last smoke test. Require every claimed post-deploy request, journal entry, and delivery read-back to carry a later timestamp, or state explicitly which boundary was not re-exercised.
+
+**Principle:** Runtime proof belongs to a specific deployed artifact and process epoch; evidence from an earlier epoch is supporting history, not final deployment proof.
+
+### Observation 20: Never use contextual grep on secret-bearing configuration
+
+**Status:** OPEN
+**Date:** 2026-09-02
+**Session context:** Read-only provider-capability RCA using a local YAML configuration
+**Skill:** systematic-debugging
+**Type:** open-source
+**Phase/Area:** Evidence collection and sanitization
+
+**Issue:** A contextual search targeted safe model and reasoning fields, but surrounding lines contained plaintext provider credentials. The search result therefore copied secrets into diagnostic tool output even though no secret field was requested.
+
+**Suggested improvement:** Treat credential-bearing configuration as structured sensitive data. Parse and emit an explicit allowlist of safe fields, or search without context and redact before output. Ban context flags around matches in files that may colocate secrets.
+
+**Principle:** Sanitization must apply to neighboring context as well as the requested match; safe search terms do not make adjacent configuration safe to print.
+
+### Observation 21: Distinguish launcher metadata from request identity
+
+**Status:** OPEN
+**Date:** 2026-09-08
+**Session context:** Repairing a provider rejection attributed to a missing client session
+**Skill:** systematic-debugging
+**Type:** open-source
+**Phase/Area:** Root-cause tracing across desktop and HTTP boundaries
+
+**Issue:** A desktop shortcut was suspected to contain identifiers needed by an upstream provider, but inspection showed only executable metadata while an exact failed request and the provider implementation showed that the required identity is generated dynamically per request.
+
+**Suggested improvement:** When a failure names a missing session or request identifier, inspect both the launcher and the final outbound HTTP contract. Classify each discovered value as install-time, process-time, conversation-time, or request-time before deciding where it should be sourced or persisted.
+
+**Principle:** Identity must be recovered at the lifecycle boundary that creates it; static launcher metadata cannot substitute for dynamic request context.
+
+<!-- 2026-09-08 OpenCode identity checkpoint after the second completed task batch: no new generalizable skill observation; request lifecycle identity is already captured in Observation 21. -->
+
+<!-- 2026-09-08 release-gate checkpoint: no new generalizable skill observation; remote visibility, deployed-process proof, and request identity are already captured in Observations 16, 19, and 21. -->
