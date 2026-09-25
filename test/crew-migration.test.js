@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { stageCrewState } from '../scripts/crew-state-migration.mjs';
+
+test('migration stages complete independent state without changing either source', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'freechain-migration-test-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, 'standalone'); const userData = path.join(root, 'user');
+  const crewData = path.join(root, 'crew'); const destination = path.join(root, 'candidate');
+  for (const dir of [sourceRoot, userData, crewData]) await fs.mkdir(dir);
+  const original = 'FREECHAIN_ACCESS_KEY=fixture-key\nFREECHAIN_GROQ_API_KEY=fixture-provider\n';
+  await fs.writeFile(path.join(sourceRoot, '.env'), original);
+  await fs.writeFile(path.join(sourceRoot, 'chain.config.json'), '{"chain":[]}');
+  await fs.writeFile(path.join(sourceRoot, '.freechain-operator.json'), '{"ui":{"density":"compact"}}');
+  await fs.writeFile(path.join(userData, 'harnesses.json'), '{"harnesses":[]}');
+  await fs.mkdir(path.join(sourceRoot, 'logs'));
+  await fs.writeFile(path.join(sourceRoot, 'logs/requests.jsonl'), '{"id":"old-request"}\n');
+  await fs.writeFile(path.join(crewData, '.cli-key'), 'fixture-cli');
+  await fs.writeFile(path.join(crewData, 'runtime.json'), '{"pid":123}');
+  const result = await stageCrewState({ sourceRoot, userData, crewData, destination, port: 4853 });
+  const migrated = await fs.readFile(path.join(destination, '.env'), 'utf8');
+  assert.ok(migrated.includes(original.trim()));
+  assert.match(migrated, /FREECHAIN_PORT=4853/);
+  assert.equal(await fs.readFile(path.join(sourceRoot, '.env'), 'utf8'), original);
+  assert.equal(await fs.readFile(path.join(destination, '.cli-key'), 'utf8'), 'fixture-cli');
+  assert.equal(await fs.readFile(path.join(destination, 'harnesses.json'), 'utf8'), '{"harnesses":[]}');
+  assert.equal(await fs.readFile(path.join(destination, 'logs/requests.jsonl'), 'utf8'), '{"id":"old-request"}\n');
+  assert.equal(JSON.stringify(result).includes('fixture-key'), false);
+  await assert.rejects(fs.access(path.join(destination, 'runtime.json')));
+  await assert.rejects(stageCrewState({ sourceRoot, userData, crewData, destination, port: 4853 }), /exists/);
+  await assert.rejects(stageCrewState({ sourceRoot, userData, crewData, destination: sourceRoot, port: 4853 }), /overlap/);
+});

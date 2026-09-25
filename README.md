@@ -1,5 +1,23 @@
 # FreeChain-API
 
+## FreeChain for Kiro Crew
+
+FreeChain is now also available as a dedicated **Kiro Crew app** with its own
+bundled engine. The original Overview, Local keys, Providers, Chain, Harness,
+Guide, Logs and Chat pages are preserved and follow the active Crew theme.
+The app includes a CLI and an agent skill. Standalone FreeChain is not required.
+
+[Download the Kiro Crew app](https://github.com/BarnsL/FreeChain-API/releases/tag/crew-v0.1.2),
+extract the release ZIP, and run `Install-FreeChain.cmd` on Windows or
+`sh install.sh` on Linux/macOS. Then enable FreeChain in Kiro Crew's Library.
+Requires Kiro Crew 0.7.0+ and Node.js 20+; no runtime npm install.
+
+See the [installation, CLI and security guide](crew-app/README.md).
+The Kiro Crew app defaults to port **4863** and keeps independent private state.
+Existing standalone clients and data are not changed by installing it.
+
+The remaining instructions describe the original standalone distribution.
+
 One OpenAI-compatible endpoint in front of an ordered chain of model providers.
 Point any OpenAI-speaking client at it, ask for the model `auto`, and the chain
 is walked until something answers.
