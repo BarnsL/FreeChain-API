@@ -227,7 +227,7 @@ async function probeLink(link, timeoutMs, signal) {
 /**
  * Build the HTTP server: the OpenAI-compatible proxy routes (`/v1/*`,
  * access-key gated), the admin API the dashboard talks to (`/admin/*`, no
- * auth of its own — see README's Security section), plain health checks
+ * restricted to same-origin loopback access), plain health checks
  * (`/healthz`, `/v1/health/deep`), and static file serving for `webui/`.
  * `chain` is mutated in place by admin actions (key edits, reordering) so it
  * always reflects what's on disk without a restart. `ui: false` (`--no-ui`)
@@ -241,6 +241,9 @@ export function createServer(chain, {
   configFile = undefined,
   harnessFile = resolveHarnessFile(),
   presetDataDir = resolveDataDir(),
+  // Only an in-process host which authenticates every admin dispatch may set
+  // this. It is never derived from an HTTP header or environment variable.
+  trustedAdminProxy = false,
 } = {}) {
   const cooldowns = new Cooldowns(chain.settings.cooldownMs);
   const stats = { served: 0, failed: 0, startedAt: Date.now() };
@@ -259,6 +262,18 @@ export function createServer(chain, {
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname.startsWith('/admin/') && !trustedAdminProxy) {
+      let local = false;
+      try {
+        const authority = new URL(`http://${req.headers.host}`);
+        local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)
+          && ['127.0.0.1', 'localhost', '[::1]'].includes(authority.hostname)
+          && !authority.username && !authority.password
+          && (!req.headers.origin || req.headers.origin === authority.origin)
+          && req.headers['sec-fetch-site'] !== 'cross-site';
+      } catch {}
+      if (!local) return fail(res, 403, 'Administration requires same-origin loopback access.');
+    }
     if (ui && url.pathname.startsWith('/admin/operator/')) {
       if (await handleOperator(req, res, url)) return;
     }
@@ -622,7 +637,7 @@ ${preset.content}` : preset.content;
           onAttempt: (a) => {
             if (verbose || a.outcome !== 'ok') {
               console.log(
-                `[freechain] ${a.provider}/${a.model} key#${a.keyIndex} ${a.outcome} (${a.ms}ms) ${a.detail ?? ''}`.trim()
+                `[freechain] ${a.provider}/${a.model} key#${a.keyIndex} ${a.outcome} (${a.ms}ms) ${a.providerStatus ?? ''}`.trim()
               );
             }
           },
@@ -683,19 +698,20 @@ ${preset.content}` : preset.content;
         stats.failed++;
         if (err instanceof ChainError) {
           journalRecord.attempts = err.attempts;
-          const lastProviderStatus = Number.parseInt(String(err.attempts.at(-1)?.detail || ''), 10);
+          const lastProviderStatus = err.attempts.at(-1)?.providerStatus;
           journalRecord.cooling = {
             count: cooldowns.snapshot().length,
             candidates: cooldowns.snapshot().map(({ id, secondsRemaining }) => ({ id, secondsRemaining })),
           };
           journalRecord.error = {
-            code: 'chain_failed',
-            category: 'provider',
-            httpStatus: 502,
+            code: err.code,
+            category: err.retryable ? 'provider' : 'request',
+            httpStatus: err.statusCode,
             providerStatus: Number.isFinite(lastProviderStatus) ? lastProviderStatus : undefined,
-            retryable: true,
+            retryable: err.retryable,
           };
-          return fail(res, 502, err.message, { attempts: err.attempts }, { cors: true });
+          const attempts = err.attempts.map(({ provider, model, keyIndex, outcome, providerStatus, ms }) => ({ provider, model, keyIndex, outcome, providerStatus, ms }));
+          return fail(res, err.statusCode, err.message, { code: err.code, type: err.retryable ? 'server_error' : 'invalid_request_error', param: err.param, retryable: err.retryable, attempts }, { cors: true });
         }
         console.error('[freechain] unexpected error:', err);
         journalRecord.error = { code: 'internal_error', category: 'internal', httpStatus: 500, retryable: true };

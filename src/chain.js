@@ -40,13 +40,17 @@ export function upstreamHeaders(link, { requestId, sessionId } = {}) {
  * Thrown when `dispatch()` gives up: every candidate was tried (or the first
  * one hit a fatal, non-retryable status) and none answered. `attempts` is the
  * full per-candidate trail so the server can report it without re-deriving
- * it, and `server.js` maps this straight to an HTTP 502.
+ * it. Typed status/code fields preserve the caller's recovery decision.
  */
 export class ChainError extends Error {
-  constructor(message, attempts) {
+  constructor(message, attempts, { statusCode = 503, code = 'upstream_unavailable', retryable = true, param } = {}) {
     super(message);
     this.name = 'ChainError';
     this.attempts = attempts;
+    this.statusCode = statusCode;
+    this.code = code;
+    this.retryable = retryable;
+    this.param = param;
   }
 }
 
@@ -89,8 +93,9 @@ export class Cooldowns {
   }
 }
 
-// 400 and 422 mean the request itself is wrong — every candidate would reject
-// it identically, so fail immediately and report it honestly. Everything else
+// 400 and 422 normally mean the request itself is wrong, so fail immediately.
+// Context limits and known provider compatibility failures are exceptions.
+// Everything else
 // (auth, rate limit, server error, network) belongs to that candidate, not the
 // caller, so move on.
 const FATAL_STATUS = new Set([400, 422]);
@@ -151,6 +156,37 @@ function retryAfterMs(res) {
 }
 
 const SSE_PREFIX_LIMIT = 64 * 1024;
+
+// Bound untrusted upstream bodies before parsing, including HTTP error bodies.
+async function readBounded(response, limit) {
+  if (!response.body) return { text: '', limited: false };
+  const reader = response.body.getReader(); const chunks = []; let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return { text: Buffer.concat(chunks).toString('utf8'), limited: false };
+      const remaining = limit - size;
+      chunks.push(Buffer.from(value.subarray(0, remaining))); size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel().catch(() => {});
+        return { text: Buffer.concat(chunks).toString('utf8'), limited: true };
+      }
+    }
+  } finally { reader.releaseLock(); }
+}
+
+function isContextOverflow(detail) {
+  let error;
+  try { const parsed = JSON.parse(detail); error = (Array.isArray(parsed) ? parsed[0] : parsed)?.error; } catch {}
+  if (error?.code === 'context_length_exceeded') return true;
+  const message = error?.message ?? detail;
+  return typeof message === 'string' && /maximum context length|context (?:length|window) (?:exceeded|exceeds)|please reduce the length of the messages or completion/i.test(message);
+}
+
+const contextOverflow = attempts => new ChainError(
+  'Context length exceeded for the available models. Reduce the messages or completion budget and retry.',
+  attempts, { statusCode: 400, code: 'context_length_exceeded', retryable: false, param: 'messages' },
+);
 
 /**
  * Read through the first meaningful SSE event before a 200 response is accepted.
@@ -221,7 +257,7 @@ async function gateSseResponse(response, signal) {
         } catch {
           return fail('malformed-data');
         }
-        if (eventType === 'error' || payload?.error) return fail('provider-error');
+        if (eventType === 'error' || payload?.error) return fail(isContextOverflow(data) ? 'context-overflow' : 'provider-error');
 
         const structuralFields = new Set([
           'annotations',
@@ -358,6 +394,7 @@ export function candidatesFor(chain, requestedModel) {
 export async function dispatch(chain, cooldowns, body, { signal, onAttempt, requestId, sessionId } = {}) {
   const candidates = candidatesFor(chain, body.model);
   const attempts = [];
+  const contextLimited = new Set();
   const request = boundedHeaderId(requestId) || randomUUID();
   const session = boundedHeaderId(sessionId) || request;
 
@@ -379,17 +416,20 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt, requ
 
   for (const cand of order) {
     const { link, provider, key, keyIndex } = cand;
+    // Another credential cannot enlarge the same model's context window.
+    if (contextLimited.has(link.index)) continue;
     const started = Date.now();
     const timeout = AbortSignal.timeout(chain.settings.requestTimeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
-    const record = (outcome, detail) => {
+    const record = (outcome, detail, providerStatus) => {
       const attempt = {
         provider, // the account slot that was tried, e.g. "openrouter2"
         model: link.model,
         keyIndex,
         outcome,
         detail,
+        providerStatus,
         ms: Date.now() - started,
       };
       attempts.push(attempt);
@@ -411,8 +451,8 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt, requ
       });
     } catch (err) {
       if (signal?.aborted) throw err; // client hung up; stop walking
-      cooldowns.penalise(cand.id, `network: ${err.message}`);
-      record('network-error', err.message);
+      cooldowns.penalise(cand.id, 'network error');
+      record('network-error', 'network error');
       continue;
     }
 
@@ -426,30 +466,69 @@ export async function dispatch(chain, cooldowns, body, { signal, onAttempt, requ
             : new DOMException('The operation was aborted', 'AbortError');
         }
         if (!gated.ok) {
+          if (gated.reason === 'context-overflow') {
+            contextLimited.add(link.index);
+            record('context-overflow', '200 SSE context_length_exceeded', 200);
+            if (chain.settings.advanceOnWrappedServerErrors === false) throw contextOverflow(attempts);
+            continue;
+          }
           cooldowns.penalise(cand.id, 'stream error');
           record('stream-error', `200 SSE ${gated.reason}`);
           continue;
         }
         res = gated.response;
+      } else {
+        let buffered;
+        try { buffered = await readBounded(res, 8 * 1024 * 1024); }
+        catch (error) {
+          if (signal?.aborted) throw error;
+          cooldowns.penalise(cand.id, 'response read failed');
+          record('network-error', 'response read failed');
+          continue;
+        }
+        let payload;
+        try { payload = JSON.parse(buffered.text); } catch {}
+        if (!buffered.limited && payload?.error && isContextOverflow(buffered.text)) {
+          contextLimited.add(link.index);
+          record('context-overflow', '200 context_length_exceeded', 200);
+          if (chain.settings.advanceOnWrappedServerErrors === false) throw contextOverflow(attempts);
+          continue;
+        }
+        if (buffered.limited || payload?.error || !Array.isArray(payload?.choices) || !payload.choices.length) {
+          cooldowns.penalise(cand.id, 'invalid upstream response');
+          record('invalid-response', '200 invalid_upstream_response', 200);
+          continue;
+        }
+        // Preserve successful provider payload bytes and metadata for the caller.
+        res = new Response(buffered.text, { status: res.status, headers: res.headers });
       }
       cooldowns.clear(cand.id);
       record('ok', `${res.status}`);
       return { response: res, link, provider, keyIndex, attempts };
     }
 
-    const detail = (await res.text().catch(() => '')).slice(0, 400);
+    const { text: detail } = await readBounded(res, 64 * 1024).catch(() => ({ text: '' }));
+
+    if (FATAL_STATUS.has(res.status) && isContextOverflow(detail)) {
+      contextLimited.add(link.index);
+      record('context-overflow', `${res.status} context_length_exceeded`, res.status);
+      if (chain.settings.advanceOnWrappedServerErrors === false) throw contextOverflow(attempts);
+      continue;
+    }
 
     if (FATAL_STATUS.has(res.status) && !wrapsRetryableUpstreamError(link, res.status, detail, chain.settings)) {
-      record('fatal', `${res.status} ${detail}`);
-      throw new ChainError(`Upstream rejected the request (${res.status}): ${detail}`, attempts);
+      record('fatal', `${res.status} invalid_request_error`, res.status);
+      throw new ChainError(`Upstream rejected the request (${res.status}). Check the request parameters.`, attempts,
+        { statusCode: res.status, code: 'invalid_request_error', retryable: false });
     }
 
     cooldowns.penalise(cand.id, `http ${res.status}`, retryAfterMs(res));
-    record('http-error', `${res.status} ${detail}`);
+    record('http-error', `${res.status} upstream_error`, res.status);
   }
 
+  if (contextLimited.size) throw contextOverflow(attempts);
   throw new ChainError(
-    `All ${order.length} candidate(s) failed. Last: ${attempts.at(-1)?.detail ?? 'unknown'}`,
+    `All ${attempts.length} candidate(s) failed. Upstream providers are unavailable; retry later.`,
     attempts
   );
 }

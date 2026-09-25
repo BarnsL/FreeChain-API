@@ -13,7 +13,9 @@ import { starterKey } from './starter.js';
 
 // A packaged binary carries chain.config.json, .env, and webui/ alongside
 // the executable itself rather than alongside this source file.
-export const ROOT = IS_SEA
+export const ROOT = process.env.FREECHAIN_ROOT_DIR?.trim()
+  ? path.resolve(process.env.FREECHAIN_ROOT_DIR)
+  : IS_SEA
   ? EXE_DIR
   : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 

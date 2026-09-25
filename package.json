@@ -12,9 +12,12 @@
   },
   "scripts": {
     "start": "node bin/freechain.mjs",
+    "pretest": "npm run build:crew",
     "test": "node --test \"test/*.test.js\"",
     "import-presets": "node bin/import-presets.mjs",
     "build": "node scripts/build-release.mjs",
+    "build:crew": "node scripts/build-crew-app.mjs",
+    "test:crew": "node --test --test-concurrency=1 test/crew-*.test.js",
     "build-guide-docs": "node scripts/build-guide-docs.mjs"
   },
   "engines": {

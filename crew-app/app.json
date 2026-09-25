@@ -1,0 +1,24 @@
+{
+  "name": "freechain",
+  "version": "0.1.2",
+  "displayName": "FreeChain",
+  "description": "The complete FreeChain dashboard and OpenAI-compatible failover engine, managed by Kiro Crew.",
+  "author": "Purple Industries",
+  "license": "MIT",
+  "iconPath": "assets/icon.svg",
+  "minKiroCrewVersion": "0.7.0",
+  "tags": ["ai", "providers", "routing", "local-api"],
+  "highlights": [
+    "Bundled engine: no standalone FreeChain process required",
+    "All eight dashboard pages with live Crew theme inheritance",
+    "Private provider keys, harnesses, presets, and request logs",
+    "Ready-to-use CLI for Crew agents and local automation"
+  ],
+  "backend": { "entryPoint": "backend/server.mjs", "type": "node", "port": "auto", "healthCheck": "/health" },
+  "ui": { "entry": "index.mjs", "pages": [{ "route": "/apps/freechain", "label": "FreeChain", "icon": "Link" }], "sidebar": { "section": "Apps", "order": 21 } },
+  "skills": ["skills/freechain"],
+  "permissions": { "api": ["/apps/freechain/api", "/apps/freechain/api/*"], "storage": true, "network": true, "spawn": false, "cron": false },
+  "dependencies": { "managedBy": "app", "commands": ["node"] },
+  "platform": { "os": ["windows", "linux", "macos"], "arch": ["x86_64", "arm64"], "requiresDesktopApp": false, "installMode": "server" },
+  "configuration": ["Enable FreeChain in Crew Library and grant app trust when requested.", "Add provider keys on Providers. This app keeps independent settings and credentials.", "Local keys shows the app-owned API endpoint. The bundled CLI discovers the running engine automatically."]
+}

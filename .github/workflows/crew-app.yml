@@ -1,0 +1,35 @@
+name: Kiro Crew app
+on:
+  push:
+    branches: ['release/kiro-crew-*']
+    tags: ['crew-v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: npm run build:crew
+      - run: node --test --test-concurrency=1 "test/*.test.js"
+      - run: python scripts/package-crew-app.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freechain-kiro-crew-${{ matrix.os }}
+          path: |
+            dist/freechain-kiro-crew-*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
