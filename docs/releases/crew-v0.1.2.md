@@ -53,3 +53,12 @@ the standalone application. Browser checks cover all eight pages, three themes,
 1280/380 px layouts with long provider text, and navigation cleanup/remount.
 Kiro Crew's installer accepts the package manifest; enabling it remains subject
 to the destination host's trust and execution policy.
+
+Local Windows result: **128 tests passed, 1 expected POSIX-permission skip, 0
+failures**. All eight pages, three themes and both viewport widths passed with
+zero browser errors. The bundled Windows installer was exercised against a
+separate Kiro Crew data home.
+
+GitHub Actions could not start Windows, Linux or macOS jobs because the repository
+owner's account is locked by a billing issue. These are runner startup failures,
+not test results. Linux/macOS execution remains unverified for this release.
